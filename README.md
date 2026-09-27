@@ -3,7 +3,7 @@
 Claude와 Codex(ChatGPT)의 **5시간 한도·주간 한도**를 작은 위젯으로 보여주고, 사용 패턴을 기준으로 **리셋(쿠폰) 추천일**을 알려줍니다.
 Python 3.8+ 표준 라이브러리만 사용해요. 설치할 패키지가 없고 anaconda도 자동으로 찾습니다.
 
-<p align="center"><img src="docs/widget.png" alt="위젯 (데모 데이터)" width="680"></p>
+<p align="center"><img src="docs/widget.png" alt="위젯 라이트·다크 (데모 데이터)" width="640"><br><img src="docs/widget_mini.png" alt="초소형 모드" width="400"></p>
 
 > 스크린샷은 모두 **데모 데이터**예요 (`--demo`).
 
@@ -40,7 +40,7 @@ Python 3.8+ 표준 라이브러리만 사용해요. 설치할 패키지가 없�
 |---|---|
 | 드래그 | 위치 이동 (기억함) |
 | 더블클릭 | 초소형 ⇄ 기본 |
-| 우클릭 | 새로고침 · 자세히 보기(큰 화면) · 항상 맨 위 · 투명도 · Claude 연결 · 컴퓨터 켤 때 자동 실행 · 닫기 |
+| 우클릭 | 새로고침 · 자세히 보기(큰 화면) · 항상 맨 위 · 투명도 · **화면 모드(자동/라이트/다크)** · Claude 연결 · 컴퓨터 켤 때 자동 실행 · 닫기 |
 | "연결이 필요해요" 칸 클릭 | 바로 Claude 연결 창 |
 
 ## 리셋 · 사용 추천 (사용량 기준)
@@ -78,9 +78,14 @@ Windows는 `%LOCALAPPDATA%\AIQuota\`, macOS/Linux는 홈 폴더(`~/.aiquota_*`)�
 
 ## 큰 화면 대시보드
 
-<p align="center"><img src="docs/dashboard.png" alt="대시보드 (데모 데이터)" width="760"></p>
+<p align="center"><img src="docs/dashboard_light.png" alt="대시보드 라이트 (데모 데이터)" width="760"></p>
 
 위젯 우클릭 ▸ **자세히 보기**, 또는 `대시보드_열기.bat`으로 열어요.
+
+## 라이트 / 다크 모드
+
+- **위젯**: 우클릭 ▸ 화면 모드 ▸ **자동 / 라이트 / 다크**. 자동은 Windows(또는 macOS) 설정을 따라가고, 설정을 바꾸면 10초 안에 위젯도 바뀌어요.
+- **대시보드**: 오른쪽 위 **자동 · 라이트 · 다크** 버튼. 고른 모드는 기억해요. 따로 고르지 않으면 위젯 설정을 따라가요.
 
 ## 보안
 
@@ -90,7 +95,7 @@ Windows는 `%LOCALAPPDATA%\AIQuota\`, macOS/Linux는 홈 폴더(`~/.aiquota_*`)�
 - 텔레메트리, 외부 CDN, 자동 업데이트가 없어요.
 - 로컬 대시보드는 `127.0.0.1` 전용이고, Host 검사와 실행마다 새로 만드는 접근 토큰, CSP를 적용했어요.
 - 설정·기록 파일은 소유자 전용이고, sessionKey는 DPAPI로 암호화해요.
-- 공격 재현 테스트 27개를 `python -m unittest discover -s tests -v`로 돌려볼 수 있어요.
+- 공격 재현·기능 테스트 29개를 `python -m unittest discover -s tests -v`로 돌려볼 수 있어요.
 - **sessionKey 보호**: 입력창은 항상 가려지고 다시 복사할 수 없어요. 연결 후엔 클립보드와 Win+V 기록에서 자동으로 지우고, 동기화되지 않는 위치에 암호화해서 저장해요.
 - ⚠️ **sessionKey는 로그인 그 자체예요.** 이 프로그램 말고 다른 곳이나 다른 사람에게 절대 붙여넣지 마세요.
 

@@ -1959,7 +1959,8 @@ def build_snapshot(force=False, with_tokens=True, with_plan=True):
         return {"generated_at": now, "version": VERSION, "tools": tools,
                 "advice": make_advice(tools, now),
                 "headline": pick_headlines(tools) if with_plan else [],
-                "profile": profile_summary(prof), "demo": DEMO}
+                "profile": profile_summary(prof), "demo": DEMO,
+                "theme": (load_config().get("widget") or {}).get("theme", "auto")}
 
 
 # ─────────────────────────────────────────────────────────────
@@ -2320,6 +2321,7 @@ HTML = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>AI 쿼터</title>
 <style>
 :root{
@@ -2331,8 +2333,19 @@ HTML = r"""<!doctype html>
   :root:not([data-theme="dark"]){
     --bg:#f5f4f0; --card:rgba(255,255,255,.78); --line:rgba(0,0,0,.08);
     --tx:#1b1d22; --tx2:#5b606b; --tx3:#8d929c; --track:rgba(0,0,0,.07); --blue:#3d6fd6; --warn:#c77a1c;
+    color-scheme: light;
   }
 }
+:root[data-theme="light"]{
+  --bg:#f5f4f0; --card:rgba(255,255,255,.78); --line:rgba(0,0,0,.08);
+  --tx:#1b1d22; --tx2:#5b606b; --tx3:#8d929c; --track:rgba(0,0,0,.07); --blue:#3d6fd6; --warn:#c77a1c;
+  color-scheme: light;
+}
+:root{color-scheme: dark}
+:root[data-theme="dark"]{color-scheme: dark}
+.seg{display:flex;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--card)}
+.seg button{border:0;border-radius:0;padding:7px 11px;font-size:12px;background:transparent;color:var(--tx2)}
+.seg button.on{background:var(--track);color:var(--tx);font-weight:700}
 *{box-sizing:border-box;margin:0;padding:0}
 body{
   font-family:"Pretendard Variable",Pretendard,-apple-system,"Segoe UI","Malgun Gothic",sans-serif;
@@ -2418,6 +2431,7 @@ footer{margin-top:22px;color:var(--tx3);font-size:12px;text-align:center;line-he
   <div class="bar">
     <div class="advice"><div class="heads" id="heads"></div><div id="advice"><div class="tip">불러오는 중…</div></div></div>
     <div class="side">
+      <div class="seg" role="group" aria-label="화면 모드"><button data-t="auto">자동</button><button data-t="light">라이트</button><button data-t="dark">다크</button></div>
       <button id="rf">↻ 지금 새로고침</button>
       <span class="meta" id="next"></span>
     </div>
@@ -2432,6 +2446,9 @@ footer{margin-top:22px;color:var(--tx3);font-size:12px;text-align:center;line-he
 <script>
 const TOKEN=(()=>{let k=new URLSearchParams(location.hash.slice(1)).get("k");try{if(k)sessionStorage.setItem("aiq",k);else k=sessionStorage.getItem("aiq")}catch(e){}if(location.hash)history.replaceState(null,"",location.pathname);return k||""})();
 async function api(q){const r=await fetch("/api/usage"+q,{headers:{"X-AIQuota-Token":TOKEN},cache:"no-store",credentials:"omit"});if(r.status===403)throw new Error("auth");return r.json()}
+const TKEY="aiq-theme";let themePref=null;try{themePref=localStorage.getItem(TKEY)}catch(e){}
+function applyTheme(m){m=(m==="light"||m==="dark")?m:"auto";if(m==="auto")delete document.documentElement.dataset.theme;else document.documentElement.dataset.theme=m;
+  document.querySelectorAll(".seg button").forEach(b=>b.classList.toggle("on",b.dataset.t===m));}
 const $=s=>document.querySelector(s);
 const WD="일월화수목금토";
 let snap=null, lastFetch=0, REFRESH=60;
@@ -2511,7 +2528,7 @@ function render(){
   $("#next").textContent=`${Math.max(0,Math.round(REFRESH-(now-lastFetch)))}초 후 자동 갱신`;
 }
 async function load(force){
-  try{ snap=await api(force?"?force=1":""); lastFetch=Date.now()/1000; render(); }
+  try{ snap=await api(force?"?force=1":""); lastFetch=Date.now()/1000; if(!themePref)applyTheme(snap.theme); render(); }
   catch(e){ lastFetch=Date.now()/1000; $("#advice").innerHTML= e.message==="auth"
     ? `<div class="tip">보안을 위해 이 주소로는 열 수 없어요 — 위젯 우클릭 ▸ 자세히 보기, 또는 aiquota.py --web 으로 다시 열어 주세요.</div>`
     : `<div class="tip">대시보드 서버와 연결이 끊겼어요 — 위젯이나 aiquota.py --web 이 실행 중인지 확인하세요.</div>`; }
@@ -2524,6 +2541,8 @@ function tick(){
   if(now-lastFetch>=REFRESH) load(false); else render();
 }
 $("#rf").onclick=()=>{ $("#rf").textContent="↻ 불러오는 중…"; load(true).then(()=>$("#rf").textContent="↻ 지금 새로고침"); };
+document.querySelectorAll(".seg button").forEach(b=>b.addEventListener("click",()=>{themePref=b.dataset.t;try{localStorage.setItem(TKEY,themePref)}catch(e){}applyTheme(themePref)}));
+applyTheme(themePref||"auto");
 load(false); setInterval(tick,1000); tick();
 </script>
 </body>
@@ -2534,7 +2553,9 @@ WIDGET_HTML = r"""<!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>AI 쿼터 위젯</title>
 <style>
-:root{--bg:#14161d;--bd:#2b2f3a;--tx:#e9ebf1;--tx2:#9aa0ad;--tx3:#6a7080;--track:#262a34;--claude:#e07a5a;--codex:#19c08c;--act:#8ab4ff;--warn:#f0a44a;--ok:#52c98a}
+:root{--bg:#14161d;--bd:#2b2f3a;--tx:#e9ebf1;--tx2:#9aa0ad;--tx3:#6a7080;--track:#262a34;--claude:#e07a5a;--codex:#19c08c;--act:#8ab4ff;--warn:#f0a44a;--ok:#52c98a;color-scheme:dark}
+@media (prefers-color-scheme: light){:root:not([data-theme="dark"]){--bg:#fbfaf7;--bd:#d9d6ce;--tx:#1b1d22;--tx2:#555a65;--tx3:#8a8f99;--track:#e6e3dc;--claude:#c65d3b;--codex:#0e946a;--act:#2f63c8;--warn:#c45f17;--ok:#1d9a57;color-scheme:light}}
+:root[data-theme="light"]{--bg:#fbfaf7;--bd:#d9d6ce;--tx:#1b1d22;--tx2:#555a65;--tx3:#8a8f99;--track:#e6e3dc;--claude:#c65d3b;--codex:#0e946a;--act:#2f63c8;--warn:#c45f17;--ok:#1d9a57;color-scheme:light}
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg);color:var(--tx);font:13px "Malgun Gothic","Segoe UI",sans-serif;padding:12px 14px;font-feature-settings:"tnum";user-select:none}
 .h{display:flex;justify-content:space-between;color:var(--tx3);font-size:11px;margin-bottom:6px}.h b{color:var(--tx);font-size:12px}
@@ -2567,7 +2588,7 @@ for(const w of m){const r=100-w.used;const ex=(w.resets_at&&w.window_sec)?Math.m
 h+=`<div class="r"><span>${w.key==="5h"?"5시간":"주간"}</span><div class="b"><div style="width:${r}%;background:${sev(w.used)}"></div>${ex!=null?`<em style="left:${100-ex}%"></em>`:""}</div><span class="p" style="color:${sev(w.used)}">${Math.round(r)}%</span><span class="c">${w.done?"리셋됨":w.resets_at?(w.key==="5h"?dur(w.resets_at-now):ws(w.resets_at)):"-"}</span></div>`}
 return h+"</div>"}).join("");
 $("#f").innerHTML=(snap.headline||[]).map(x=>`<div class="lv-${x.level}">${esc(x.text)}</div>`).join("")||`<div class="lv-info">${esc((snap.advice||[""])[0])}</div>`}
-async function load(){try{snap=await api("?lite=1");last=Date.now()}catch(e){last=Date.now();if(e.message==="auth")$("#w").innerHTML='<div class="e">위젯을 다시 실행해 주세요 (보안 토큰 만료)</div>'}draw()}
+async function load(){try{snap=await api("?lite=1");last=Date.now();const m=snap.theme;if(m==="light"||m==="dark")document.documentElement.dataset.theme=m;else delete document.documentElement.dataset.theme}catch(e){last=Date.now();if(e.message==="auth")$("#w").innerHTML='<div class="e">위젯을 다시 실행해 주세요 (보안 토큰 만료)</div>'}draw()}
 load();setInterval(()=>{if(Date.now()-last>60000)load();else draw()},1000);
 </script></body></html>
 """
@@ -2739,6 +2760,42 @@ def set_autostart(on):
 LV = {"good": "#5ad08f", "mid": "#f2c14e", "low": "#f5953c", "out": "#f05d5d", "none": "#5d6372"}
 TIPC = {"act": "#8ab4ff", "warn": "#f5953c", "info": "#9aa0ad", "ok": "#5ad08f"}
 
+THEMES = {
+    "dark": {"bg": "#14161d", "bd": "#2a2e39", "line": "#232733", "tx": "#e9ebf1", "tx2": "#9aa0ad", "tx3": "#6c7282",
+             "track": "#272b36", "good": "#5ad08f", "mid": "#f2c14e", "low": "#f5953c", "out": "#f05d5d",
+             "none": "#5d6372", "act": "#8ab4ff", "warn": "#f5953c", "info": "#9aa0ad", "ok": "#5ad08f",
+             "claude": "#e07a5a", "codex": "#19c08c", "ttbg": "#0e1016", "ttbd": "#303544", "dotoff": "#3a3f4c",
+             "inbg": "#0d0f14", "btn": "#2a2e39", "btnh": "#343948", "pri": "#3d6fd6", "prih": "#4a7be0"},
+    "light": {"bg": "#fbfaf7", "bd": "#d9d6ce", "line": "#ebe8e1", "tx": "#1b1d22", "tx2": "#555a65", "tx3": "#8a8f99",
+              "track": "#e6e3dc", "good": "#1d9a57", "mid": "#b07d00", "low": "#d2621b", "out": "#d23a3a",
+              "none": "#b3b6bd", "act": "#2f63c8", "warn": "#c45f17", "info": "#555a65", "ok": "#1d9a57",
+              "claude": "#c65d3b", "codex": "#0e946a", "ttbg": "#ffffff", "ttbd": "#d6d3cc", "dotoff": "#d3d0c8",
+              "inbg": "#ffffff", "btn": "#ebe9e3", "btnh": "#e0ded7", "pri": "#2f63c8", "prih": "#3a6fd6"},
+}
+THEME_LABELS = (("auto", "자동 (컴퓨터 설정 따라가기)"), ("light", "라이트"), ("dark", "다크"))
+
+
+def os_prefers_light():
+    """운영체제 라이트/다크 설정 읽기 (Windows 레지스트리 / macOS). 모르면 다크."""
+    try:
+        if os.name == "nt":
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize") as k:
+                return winreg.QueryValueEx(k, "AppsUseLightTheme")[0] == 1
+        if sys.platform == "darwin":
+            r = subprocess.run(["defaults", "read", "-g", "AppleInterfaceStyle"], capture_output=True, text=True, timeout=3)
+            return "dark" not in (r.stdout or "").lower()
+    except Exception:
+        pass
+    return False
+
+
+def resolve_theme(mode):
+    if mode in ("light", "dark"):
+        return mode
+    return "light" if os_prefers_light() else "dark"
+
 
 def level_of(rem):
     if rem is None:
@@ -2858,6 +2915,12 @@ class SessionKeyDialog:
     - 연결에 성공하면 클립보드와 클립보드 기록(Win+V)에서 자동 삭제
     - 닫히는 즉시 입력값을 비움"""
     BG, FG, SUB, INBG, WARN, ERR, OK = "#14161d", "#e9ebf1", "#9aa0ad", "#0d0f14", "#f5953c", "#f05d5d", "#5ad08f"
+    BTN, BTNH, PRI, PRIH, BD = "#2a2e39", "#343948", "#3d6fd6", "#4a7be0", "#303544"
+
+    @staticmethod
+    def colors_from(C):
+        return {"BG": C["bg"], "FG": C["tx"], "SUB": C["tx2"], "INBG": C["inbg"], "WARN": C["warn"], "ERR": C["out"],
+                "OK": C["ok"], "BTN": C["btn"], "BTNH": C["btnh"], "PRI": C["pri"], "PRIH": C["prih"], "BD": C["ttbd"]}
 
     def __init__(self, root, on_done=None, colors=None):
         import tkinter as tk
@@ -2895,7 +2958,7 @@ class SessionKeyDialog:
         self.var = tk.StringVar(master=t)
         self.ent = tk.Entry(f, textvariable=self.var, show="•", exportselection=False, width=40,
                             bg=self.INBG, fg=self.FG, insertbackground=self.FG, relief="flat",
-                            highlightthickness=1, highlightbackground="#303544", highlightcolor="#8ab4ff")
+                            highlightthickness=1, highlightbackground=self.BD, highlightcolor=self.PRI)
         self.ent.pack(fill="x", pady=(12, 0), ipady=6)
         for seq in ("<<Copy>>", "<<Cut>>", "<Control-c>", "<Control-C>", "<Control-x>", "<Control-X>",
                     "<Control-Insert>", "<Shift-Delete>", "<Button-3>", "<Button-2>", "<<PasteSelection>>"):
@@ -2906,14 +2969,14 @@ class SessionKeyDialog:
         row = tk.Frame(f, bg=self.BG)
         row.pack(fill="x", pady=(10, 0))
         mk = dict(relief="flat", padx=12, pady=5, cursor="hand2", bd=0)
-        self.b_cancel = tk.Button(row, text="취소", command=self.cancel, bg="#2a2e39", fg=self.FG,
-                                  activebackground="#343948", activeforeground=self.FG, **mk)
+        self.b_cancel = tk.Button(row, text="취소", command=self.cancel, bg=self.BTN, fg=self.FG,
+                                  activebackground=self.BTNH, activeforeground=self.FG, **mk)
         self.b_cancel.pack(side="right")
-        self.b_ok = tk.Button(row, text="연결", command=self.connect, bg="#3d6fd6", fg="#ffffff",
-                              activebackground="#4a7be0", activeforeground="#ffffff", **mk)
+        self.b_ok = tk.Button(row, text="연결", command=self.connect, bg=self.PRI, fg="#ffffff",
+                              activebackground=self.PRIH, activeforeground="#ffffff", **mk)
         self.b_ok.pack(side="right", padx=(0, 6))
-        self.b_paste = tk.Button(row, text="클립보드에서 붙여넣기", command=self.paste, bg="#2a2e39", fg=self.FG,
-                                 activebackground="#343948", activeforeground=self.FG, **mk)
+        self.b_paste = tk.Button(row, text="클립보드에서 붙여넣기", command=self.paste, bg=self.BTN, fg=self.FG,
+                                 activebackground=self.BTNH, activeforeground=self.FG, **mk)
         self.b_paste.pack(side="left")
         t.protocol("WM_DELETE_WINDOW", self.cancel)
         t.update_idletasks()
@@ -3021,6 +3084,10 @@ class QuotaWidget:
         self.topmost = bool(wc.get("topmost", True))
         self.alpha = float(wc.get("alpha", 0.97))
         self.x, self.y = wc.get("x"), wc.get("y")
+        self.theme_mode = wc.get("theme", "auto") if wc.get("theme") in ("auto", "light", "dark") else "auto"
+        self.theme = resolve_theme(self.theme_mode)
+        self.C = THEMES[self.theme]
+        self._theme_check = now_ts()
         root.overrideredirect(True)
         self.transparent = False
         if os.name == "nt":
@@ -3030,7 +3097,7 @@ class QuotaWidget:
                 self.transparent = True
             except tk.TclError:
                 pass
-        base_bg = TRANSP if self.transparent else WG["bg"]
+        base_bg = TRANSP if self.transparent else self.C["bg"]
         root.configure(bg=base_bg)
         self.cv = tk.Canvas(root, bg=base_bg, highlightthickness=0, bd=0)
         self.cv.pack(fill="both", expand=True)
@@ -3092,7 +3159,22 @@ class QuotaWidget:
 
     def save_cfg(self):
         update_config(widget={"x": self.x, "y": self.y, "compact": self.mini,
-                              "topmost": self.topmost, "alpha": self.alpha})
+                              "topmost": self.topmost, "alpha": self.alpha, "theme": self.theme_mode})
+
+    def set_theme(self, mode=None):
+        if mode:
+            self.theme_mode = mode
+            self.save_cfg()
+        t = resolve_theme(self.theme_mode)
+        if t != self.theme or mode:
+            self.theme = t
+            self.C = THEMES[t]
+            self.images.clear()
+            if not self.transparent:
+                self.root.configure(bg=self.C["bg"])
+                self.cv.configure(bg=self.C["bg"])
+            self.hide_tt()
+            self.draw()
 
     def fetch(self, force=False):
         if self.loading and not force:
@@ -3124,6 +3206,9 @@ class QuotaWidget:
                 pass
         if self.toast and now > self.toast[1]:
             self.toast = None
+        if self.theme_mode == "auto" and now - self._theme_check >= 10:   # 컴퓨터 설정이 바뀌면 따라감
+            self._theme_check = now
+            self.set_theme()
         if not self.mouse_in and now - self.tip_t >= self.TIP_EVERY:
             self.tip_i += 1
             self.tip_t = now
@@ -3146,12 +3231,12 @@ class QuotaWidget:
         else:
             geo = [(size / 2.0, P(6))]
         spec = tuple((round(f * 200) / 200, col) for f, col in parts)
-        ck = (key, size, spec, dot)
+        ck = (key, size, spec, dot, self.theme)
         img = self.images.get(key)
         if img and img[0] == ck:
             return img[1]
-        rings = [(ro, th, f, col, "#272b36") for (ro, th), (f, col) in zip(geo, spec)]
-        data = render_ring(size, WG["bg"], rings, dot=(P(3), dot) if dot else None)
+        rings = [(ro, th, f, col, self.C["track"]) for (ro, th), (f, col) in zip(geo, spec)]
+        data = render_ring(size, self.C["bg"], rings, dot=(P(3), dot) if dot else None)
         ph = self.tk.PhotoImage(width=size, height=size)
         ph.put(data)
         self.images[key] = (ck, ph)
@@ -3198,10 +3283,10 @@ class QuotaWidget:
                     cands.append(it)
         cands.sort(key=lambda x: (LEVEL_RANK.get(x["level"], 9), KIND_RANK.get(x["kind"], 9)))
         for it in cands[:3]:
-            out.append((it["short"], TIPC.get(it["level"], TIPC["info"])))
+            out.append((it["short"], self.C.get(it["level"], self.C["info"])))
         r = self.routing(snap)
         if r:
-            out.insert(0 if not out or out[0][1] == TIPC["info"] else len(out), r)
+            out.insert(0 if not out or out[0][1] == self.C["info"] else len(out), r)
         return out[:4]
 
     def routing(self, snap):
@@ -3211,18 +3296,18 @@ class QuotaWidget:
         if len(live) < 2:
             if len(live) == 1:
                 t, v = live[0]
-                return (f"{t['name']} {v['rem']:.0f}% 남았어요", TIPC["info"])
+                return (f"{t['name']} {v['rem']:.0f}% 남았어요", self.C["info"])
             return None
         (ta, va), (tb, vb) = sorted(live, key=lambda p: -p[1]["rem"])
         if vb["rem"] < 3 and va["rem"] >= 3:
-            return (f"{tb['name']} 바닥 · 지금은 {ta['name']}로 작업하세요", TIPC["act"])
+            return (f"{tb['name']} 바닥 · 지금은 {ta['name']}로 작업하세요", self.C["act"])
         if va["rem"] < 3:
-            return ("둘 다 바닥 · 잠시 쉬어가세요", TIPC["warn"])
+            return ("둘 다 바닥 · 잠시 쉬어가세요", self.C["warn"])
         if va["rem"] - vb["rem"] >= 25:
-            return (f"지금은 {ta['name']}가 더 넉넉해요", TIPC["ok"])
+            return (f"지금은 {ta['name']}가 더 넉넉해요", self.C["ok"])
         if vb["rem"] >= 50:
-            return ("둘 다 넉넉해요", TIPC["ok"])
-        return ("둘 다 비슷하게 남았어요", TIPC["info"])
+            return ("둘 다 넉넉해요", self.C["ok"])
+        return ("둘 다 비슷하게 남았어요", self.C["info"])
 
     # ── 화면 ──
     def draw(self):
@@ -3231,7 +3316,7 @@ class QuotaWidget:
         now = now_ts()
         snap = live_view(self.snap, now) if self.snap else None
         W, H = self.draw_mini(snap, now) if self.mini else self.draw_full(snap, now)
-        bg = self.rrect(1, 1, W - 1, H - 1, self.P(16), fill=WG["bg"], outline="#2a2e39", width=1)
+        bg = self.rrect(1, 1, W - 1, H - 1, self.P(16), fill=self.C["bg"], outline=self.C["bd"], width=1)
         cv.tag_lower(bg)
         if (W, H) != self.size:
             self.size = (W, H)
@@ -3252,85 +3337,85 @@ class QuotaWidget:
         pad = P(14)
         self.rows = []
         if not snap:
-            cv.create_text(W / 2, P(38), text="불러오는 중…", font=F["sub"], fill=WG["tx2"])
+            cv.create_text(W / 2, P(38), text="불러오는 중…", font=F["sub"], fill=self.C["tx2"])
             return W, P(76)
         y = P(12)
         D = P(48)
         for i, t in enumerate(snap["tools"]):
             if i:
-                cv.create_line(pad, y - P(6), W - pad, y - P(6), fill="#232733")
+                cv.create_line(pad, y - P(6), W - pad, y - P(6), fill=self.C["line"])
             v = self.tool_view(t, now)
             y0 = y
             # 이중 링: 바깥 = 5시간, 안쪽 = 이번 주
             parts = []
             for w in (v["w5"], v["w7"]):
                 if w:
-                    parts.append((w["remaining"] / 100.0, LV[level_of(w["remaining"])[0]]))
+                    parts.append((w["remaining"] / 100.0, self.C[level_of(w["remaining"])[0]]))
             if not parts:
-                parts = [(0.0, LV["none"]), (0.0, LV["none"])]
-            img = self.ring(t["id"], D, parts, WG[t["id"]])
+                parts = [(0.0, self.C["none"]), (0.0, self.C["none"])]
+            img = self.ring(t["id"], D, parts, self.C[t["id"]])
             cv.create_image(pad, y + P(1), image=img, anchor="nw")
             x = pad + D + P(12)
             # 1줄: 이름 + 한 단어 상태
-            nx = self.texts(x, y + P(1), [(t["name"], F["name"], WG["tx"])])
+            nx = self.texts(x, y + P(1), [(t["name"], F["name"], self.C["tx"])])
             if v["word"]:
-                cv.create_text(nx + P(7), y + P(3), text=v["word"], anchor="nw", font=F["verdict"], fill=LV[v["lv"]])
+                cv.create_text(nx + P(7), y + P(3), text=v["word"], anchor="nw", font=F["verdict"], fill=self.C[v["lv"]])
             if v["rem"] is not None and t.get("error"):
                 ex = nx + P(7) + (F["verdict"].measure(v["word"]) if v["word"] else 0) + P(6)
-                cv.create_oval(ex, y + P(8), ex + P(5), y + P(13), fill=WG["warn"], outline="")
+                cv.create_oval(ex, y + P(8), ex + P(5), y + P(13), fill=self.C["warn"], outline="")
             # 오른쪽: 큰 숫자
             if v["rem"] is not None:
-                col = LV[v["lv"]]
+                col = self.C[v["lv"]]
                 pw = F["pct"].measure("%")
                 cv.create_text(W - pad, y + P(6), text="%", anchor="ne", font=F["pct"], fill=col)
                 cv.create_text(W - pad - pw - P(1), y - P(2), text=f"{v['rem']:.0f}", anchor="ne",
                                font=F["big"], fill=col)
-                cv.create_text(W - pad, y + P(31), text="남음", anchor="ne", font=F["tiny"], fill=WG["tx3"])
+                cv.create_text(W - pad, y + P(31), text="남음", anchor="ne", font=F["tiny"], fill=self.C["tx3"])
             else:
-                cv.create_text(W - pad, y + P(2), text="–", anchor="ne", font=F["big"], fill=LV["none"])
+                cv.create_text(W - pad, y + P(2), text="–", anchor="ne", font=F["big"], fill=self.C["none"])
             # 2줄: 두 한도
             if v["rem"] is not None:
                 segs = []
                 if v["w5"]:
-                    segs += [("5시간 ", F["sub"], WG["tx3"]),
-                             (f"{v['w5']['remaining']:.0f}%", F["subb"], LV[level_of(v['w5']['remaining'])[0]])]
+                    segs += [("5시간 ", F["sub"], self.C["tx3"]),
+                             (f"{v['w5']['remaining']:.0f}%", F["subb"], self.C[level_of(v['w5']['remaining'])[0]])]
                 if v["w7"]:
                     if segs:
-                        segs.append(("   ", F["sub"], WG["tx3"]))
-                    segs += [("이번 주 ", F["sub"], WG["tx3"]),
-                             (f"{v['w7']['remaining']:.0f}%", F["subb"], LV[level_of(v['w7']['remaining'])[0]])]
+                        segs.append(("   ", F["sub"], self.C["tx3"]))
+                    segs += [("이번 주 ", F["sub"], self.C["tx3"]),
+                             (f"{v['w7']['remaining']:.0f}%", F["subb"], self.C[level_of(v['w7']['remaining'])[0]])]
                 self.texts(x, y + P(22), segs)
                 rt = refill_text(v["bind"], now)
-                rcol = LV["out"] if v["lv"] == "out" else WG["tx2"]
+                rcol = self.C["out"] if v["lv"] == "out" else self.C["tx2"]
                 runs = [w for w in (v["w5"], v["w7"]) if w and w.get("eta_empty") and w.get("resets_at")]
                 if runs and v["lv"] != "out":
                     w = min(runs, key=lambda w: w["eta_empty"])
                     rt = f"{self.clock(w['eta_empty'], now)}쯤 바닥 → {self.clock(w['resets_at'], now)} 채워짐"
-                    rcol = LV["low"]
+                    rcol = self.C["low"]
                 cv.create_text(x, y + P(38), text=self.fit(rt, F["tiny"], W - pad - x - P(34)),
                                anchor="nw", font=F["tiny"], fill=rcol)
             else:
                 a, b = short_error(t)
-                cv.create_text(x, y + P(22), text=a, anchor="nw", font=F["subb"], fill=WG["warn"])
-                cv.create_text(x, y + P(38), text=b, anchor="nw", font=F["tiny"], fill=WG["tx2"])
+                cv.create_text(x, y + P(22), text=a, anchor="nw", font=F["subb"], fill=self.C["warn"])
+                cv.create_text(x, y + P(38), text=b, anchor="nw", font=F["tiny"], fill=self.C["tx2"])
             y += P(56)
             self.rows.append((y0 - P(6), y - P(4), t))
             y += P(10)
         # 한 줄 팁 (6초마다 바뀜)
         y -= P(4)
-        cv.create_line(pad, y, W - pad, y, fill="#232733")
+        cv.create_line(pad, y, W - pad, y, fill=self.C["line"])
         y += P(9)
         tips = self.tips(snap)
         if not tips and not any(t["windows"] for t in snap["tools"]):
-            tips = [("Claude 칸을 눌러 연결하세요", TIPC["act"])]
+            tips = [("Claude 칸을 눌러 연결하세요", self.C["act"])]
         if self.toast:
-            tips = [(self.toast[0], TIPC["act"])]
+            tips = [(self.toast[0], self.C["act"])]
         right_space = P(44) if (self.mouse_in or len(tips) > 1) else P(4)
         if tips:
             txt, col = tips[self.tip_i % len(tips)]
             cv.create_oval(pad, y + P(6), pad + P(7), y + P(13), fill=col, outline="")
             cv.create_text(pad + P(13), y + P(1), text=self.fit(txt, F["tip"], W - 2 * pad - P(13) - right_space),
-                           anchor="nw", font=F["tip"], fill=WG["tx"])
+                           anchor="nw", font=F["tip"], fill=self.C["tx"])
         if self.mouse_in:
             self.draw_controls(W - pad, y + P(9))
         elif len(tips) > 1:
@@ -3340,9 +3425,9 @@ class QuotaWidget:
                 on = k == self.tip_i % n
                 r = max(2, P(2))
                 cv.create_rectangle(cx - r, y + P(9) - r, cx + r, y + P(9) + r,
-                                    fill=WG["tx"] if on else "#3a3f4c", outline="")
+                                    fill=self.C["tx"] if on else self.C["dotoff"], outline="")
         elif self.loading:
-            cv.create_oval(W - pad - P(6), y + P(6), W - pad, y + P(12), fill=TIPC["act"], outline="")
+            cv.create_oval(W - pad - P(6), y + P(6), W - pad, y + P(12), fill=self.C["act"], outline="")
         y += P(24)
         return W, y + P(4)
 
@@ -3350,13 +3435,13 @@ class QuotaWidget:
         cv, P = self.cv, self.P
         # 닫기 ✕
         cx, r = xr - P(5), P(4)
-        cv.create_rectangle(cx - P(9), cy - P(9), cx + P(9), cy + P(9), fill=WG["bg"], outline="", tags=("btn", "act_close"))
+        cv.create_rectangle(cx - P(9), cy - P(9), cx + P(9), cy + P(9), fill=self.C["bg"], outline="", tags=("btn", "act_close"))
         for a, b in ((-r, -r), (-r, r)):
-            cv.create_line(cx + a, cy + b, cx - a, cy - b, fill=WG["tx2"], width=max(1, P(1.6)), tags=("btn", "act_close"))
+            cv.create_line(cx + a, cy + b, cx - a, cy - b, fill=self.C["tx2"], width=max(1, P(1.6)), tags=("btn", "act_close"))
         # 새로고침
         rx = cx - P(22)
-        col = TIPC["act"] if self.loading else WG["tx2"]
-        cv.create_rectangle(rx - P(9), cy - P(9), rx + P(9), cy + P(9), fill=WG["bg"], outline="", tags=("btn", "act_refresh"))
+        col = self.C["act"] if self.loading else self.C["tx2"]
+        cv.create_rectangle(rx - P(9), cy - P(9), rx + P(9), cy + P(9), fill=self.C["bg"], outline="", tags=("btn", "act_refresh"))
         rr = P(5)
         cv.create_arc(rx - rr, cy - rr, rx + rr, cy + rr, start=60, extent=290, style="arc",
                       outline=col, width=max(1, P(1.6)), tags=("btn", "act_refresh"))
@@ -3370,45 +3455,45 @@ class QuotaWidget:
         pad = P(10)
         self.rows = []
         if not snap:
-            cv.create_text(W / 2, P(22), text="불러오는 중…", font=F["tiny"], fill=WG["tx2"])
+            cv.create_text(W / 2, P(22), text="불러오는 중…", font=F["tiny"], fill=self.C["tx2"])
             return W, P(44)
         D = P(30)
         colw = (W - 2 * pad) / 2.0
         for i, t in enumerate(snap["tools"]):
             v = self.tool_view(t, now)
             x = pad + i * colw
-            parts = [(w["remaining"] / 100.0, LV[level_of(w["remaining"])[0]]) for w in (v["w5"], v["w7"]) if w]
+            parts = [(w["remaining"] / 100.0, self.C[level_of(w["remaining"])[0]]) for w in (v["w5"], v["w7"]) if w]
             if not parts:
-                parts = [(0.0, LV["none"]), (0.0, LV["none"])]
+                parts = [(0.0, self.C["none"]), (0.0, self.C["none"])]
             if len(parts) == 2:
                 # 미니 링은 두께를 줄여서
-                img = self.mini_ring(t["id"], D, parts, WG[t["id"]])
+                img = self.mini_ring(t["id"], D, parts, self.C[t["id"]])
             else:
-                img = self.ring(t["id"] + "_m", D, parts, WG[t["id"]])
+                img = self.ring(t["id"] + "_m", D, parts, self.C[t["id"]])
             cv.create_image(x, P(8), image=img, anchor="nw")
             tx = x + D + P(6)
             if v["rem"] is not None:
-                col = LV[v["lv"]]
+                col = self.C[v["lv"]]
                 ex = self.texts(tx, P(6), [(f"{v['rem']:.0f}", F["mbig"], col)])
                 cv.create_text(ex + P(1), P(11), text="%", anchor="nw", font=F["mpct"], fill=col)
             else:
-                cv.create_text(tx, P(6), text="–", anchor="nw", font=F["mbig"], fill=LV["none"])
-            cv.create_text(tx, P(27), text=t["name"], anchor="nw", font=F["mname"], fill=WG["tx3"])
+                cv.create_text(tx, P(6), text="–", anchor="nw", font=F["mbig"], fill=self.C["none"])
+            cv.create_text(tx, P(27), text=t["name"], anchor="nw", font=F["mname"], fill=self.C["tx3"])
             self.rows.append((0, P(46), t, x, x + colw))
         return W, P(46)
 
     def mini_ring(self, key, size, parts, dot):
         P = self.P
         spec = tuple((round(f * 200) / 200, col) for f, col in parts)
-        ck = ("mini", key, size, spec)
+        ck = ("mini", key, size, spec, self.theme)
         k = key + "_mini"
         img = self.images.get(k)
         if img and img[0] == ck:
             return img[1]
-        rings = [(size / 2.0, P(3.6), spec[0][0], spec[0][1], "#272b36"),
-                 (size / 2.0 - P(5.4), P(3), spec[1][0], spec[1][1], "#272b36")]
+        rings = [(size / 2.0, P(3.6), spec[0][0], spec[0][1], self.C["track"]),
+                 (size / 2.0 - P(5.4), P(3), spec[1][0], spec[1][1], self.C["track"])]
         ph = self.tk.PhotoImage(width=size, height=size)
-        ph.put(render_ring(size, WG["bg"], rings, dot=(P(2.3), dot)))
+        ph.put(render_ring(size, self.C["bg"], rings, dot=(P(2.3), dot)))
         self.images[k] = (ck, ph)
         return ph
 
@@ -3493,14 +3578,14 @@ class QuotaWidget:
             tw.attributes("-topmost", True)
         except tk.TclError:
             pass
-        fr = tk.Frame(tw, bg="#0e1016", highlightthickness=1, highlightbackground="#303544")
+        fr = tk.Frame(tw, bg=self.C["ttbg"], highlightthickness=1, highlightbackground=self.C["ttbd"])
         fr.pack()
-        colors = {"head": WG["tx"], "body": WG["tx"], "warn": LV["low"], "tip": TIPC["act"], "dim": WG["tx3"]}
+        colors = {"head": self.C["tx"], "body": self.C["tx"], "warn": self.C["low"], "tip": self.C["act"], "dim": self.C["tx3"]}
         for txt, kind in lines:
-            tk.Label(fr, text=txt, bg="#0e1016", fg=colors[kind], justify="left", anchor="w",
+            tk.Label(fr, text=txt, bg=self.C["ttbg"], fg=colors[kind], justify="left", anchor="w",
                      font=self.F["ttb"] if kind == "head" else self.F["tt"], wraplength=self.P(300)
                      ).pack(fill="x", padx=self.P(12), pady=(self.P(8) if kind == "head" else 0, self.P(2)))
-        tk.Frame(fr, bg="#0e1016", height=self.P(6)).pack()
+        tk.Frame(fr, bg=self.C["ttbg"], height=self.P(6)).pack()
         tw.update_idletasks()
         tw_w = tw.winfo_reqwidth()
         sw = self.root.winfo_screenwidth()
@@ -3575,6 +3660,12 @@ class QuotaWidget:
         for a, lab in ((1.0, "선명하게"), (0.9, "조금 투명"), (0.78, "투명"), (0.65, "많이 투명")):
             sub.add_radiobutton(label=lab, value=a, variable=self.v_alpha, command=self.set_alpha)
         m.add_cascade(label="투명도", menu=sub)
+        tm = tk.Menu(m, tearoff=0)
+        self.v_theme = tk.StringVar(value=self.theme_mode)
+        for val, lab in THEME_LABELS:
+            tm.add_radiobutton(label=lab, value=val, variable=self.v_theme,
+                               command=lambda: self.set_theme(self.v_theme.get()))
+        m.add_cascade(label="화면 모드 (라이트/다크)", menu=tm)
         m.add_separator()
         m.add_command(label="Claude 연결하기…", command=self.connect_claude)
         if get_secret("claude_session_key"):
@@ -3638,7 +3729,7 @@ class QuotaWidget:
                 self.fetch(force=True)
                 from tkinter import messagebox
                 messagebox.showinfo("Claude 연결하기", msg, parent=self.root)
-        self._dlg = SessionKeyDialog(self.root, done)
+        self._dlg = SessionKeyDialog(self.root, done, colors=SessionKeyDialog.colors_from(self.C))
 
     def finish_connect(self):
         pass
