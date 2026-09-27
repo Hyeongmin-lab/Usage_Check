@@ -8,13 +8,29 @@
 | 읽는 것 | 위치 | 보내는 곳 (이 외에는 절대 안 보냄) |
 |---|---|---|
 | Claude Code 로그인 토큰 | `~/.claude/.credentials.json` (macOS는 키체인) | `https://api.anthropic.com` |
-| claude.ai sessionKey (직접 연결한 경우) | `~/.aiquota_config.json` | `https://claude.ai` |
+| claude.ai sessionKey (직접 연결한 경우) | Windows: `%LOCALAPPDATA%\AIQuota\config.json` (암호화) · macOS/Linux: `~/.aiquota_config.json` | `https://claude.ai` |
 | Codex 로그인 토큰 | `~/.codex/auth.json` | `https://chatgpt.com` |
 | 세션 로그 (시간·토큰 수만) | `~/.claude/projects`, `~/.codex/sessions` | 어디로도 안 보냄 |
 
 - 로그인 파일은 **읽기만** 하고 수정하지 않습니다.
 - 대화 내용은 읽지 않습니다. 로그에서는 시각·토큰 수·모델명만 씁니다.
 - 원격 수집(텔레메트리), 자동 업데이트, 외부 CDN이 **없습니다**. 표준 라이브러리만 쓰므로 설치할 패키지도 없습니다.
+
+## sessionKey 보호 (가장 중요)
+
+sessionKey는 claude.ai 로그인 그 자체라서, **입력 → 전송 → 저장 → 사용 후 흔적**까지 모든 단계에서 새지 않게 막았습니다.
+
+| 단계 | 새는 경로 | 막는 방법 |
+|---|---|---|
+| 입력 | 화면에 보임 · 입력칸에서 복사/잘라내기로 다시 꺼냄 · 선택 영역 공유 | 항상 `•`로 가림 (보기 기능 없음) · 복사/잘라내기/우클릭/선택 내보내기 차단 · 창을 닫으면 입력값 즉시 삭제 |
+| 입력 | 붙여넣은 키가 **클립보드**에 계속 남음 | 연결되면 클립보드에서 자동 삭제 |
+| 입력 | **클립보드 기록(Win+V)** · 클라우드 클립보드로 다른 기기까지 퍼짐 | Windows 클립보드 기록에서 해당 항목만 자동 삭제. 삭제 스크립트에는 키가 아니라 **SHA-256 해시만** 넣어서 PowerShell 로그나 프로세스 목록에 키가 남지 않음. 자동 삭제가 막히면 직접 지우는 방법을 안내 |
+| 입력 | 콘솔(`--setup`) 화면·명령 기록 | 입력이 화면에 안 보이는 방식(getpass). 명령줄 인자로는 받지 않음 |
+| 전송 | 다른 서버로 전달 · 프로세스 목록 노출 | `claude.ai`에만 https로 전송 · 리다이렉트 차단 · curl에는 표준입력으로 전달 |
+| 저장 | 평문 파일 · 로밍 프로필/OneDrive 동기화 | Windows **DPAPI + 앱 전용 엔트로피**로 암호화해서 **`%LOCALAPPDATA%`**(동기화 안 되는 위치)에 저장. 암호화 실패 시 평문 저장하지 않음. 예전 버전이 홈 폴더에 남긴 사본은 자동으로 옮긴 뒤 삭제 |
+| 사용 | 화면 · 대시보드 · 로그 · 오류 문구 | 어디에도 표시하지 않음 (일부 글자도 안 보여줌). 대시보드 데이터에 포함되지 않음. 오류 문구의 키 모양 문자열은 `***` 처리 |
+
+모두 `tests/test_security.py`의 `TestSessionKeyNeverExposed`와 `TestSessionKeyDialog`로 검증합니다.
 
 ## 적용된 보호 장치
 
@@ -33,7 +49,7 @@
 - CSP(`default-src 'none'`, 스크립트는 요청마다 새 nonce), `X-Frame-Options: DENY`, `nosniff`, `no-referrer`를 적용했습니다. 화면에 넣는 모든 값은 HTML 이스케이프합니다.
 
 **저장**
-- claude.ai sessionKey는 Windows에서 **DPAPI(현재 Windows 사용자 계정)로 암호화**해 저장합니다. 암호화에 실패하면 평문으로 저장하지 않고 오류를 냅니다.
+- claude.ai sessionKey는 Windows에서 **DPAPI(현재 Windows 사용자 계정) + 앱 전용 엔트로피로 암호화**해 `%LOCALAPPDATA%\AIQuota`에 저장합니다. 암호화에 실패하면 평문으로 저장하지 않고 오류를 냅니다.
 - macOS / Linux에서는 암호화하지 않고 **소유자 전용(600) 파일**로 저장합니다. 파일에 두기 싫다면 환경변수 `AIQUOTA_CLAUDE_SESSION_KEY`로 넘길 수 있습니다.
 - 설정·캐시·기록 파일은 항상 600 권한의 임시 파일에 쓴 뒤 원자적으로 교체합니다.
 - sessionKey는 `sk-ant-…` 형식만 받습니다. 줄바꿈 같은 헤더 주입 문자는 거부합니다.
@@ -56,7 +72,7 @@
 | 7 | 오류 문구에 토큰·프록시 비밀번호가 그대로 표시 | 화면·스크린샷으로 유출 | 비밀값 가리기 |
 
 이 밖에 외부 CDN 폰트 제거, NaN/무한대 값 무력화, 응답 크기 제한, sessionKey 형식 검증, 자동 실행 경로 이스케이프도 추가했습니다.
-각 공격이 계속 막히는지는 `tests/test_security.py`(18개 테스트)로 확인할 수 있습니다.
+각 공격이 계속 막히는지는 `tests/test_security.py`(27개 테스트)로 확인할 수 있습니다.
 
 ```
 python -m unittest discover -s tests -v
@@ -64,8 +80,11 @@ python -m unittest discover -s tests -v
 
 ## 남아 있는 위험 (사용 전에 알아두세요)
 
+- 파이썬은 메모리 속 문자열을 강제로 지울 수 없어요. 프로그램이 실행되는 동안에는 키가 메모리에 남아 있을 수 있어요 (같은 사용자 권한의 악성코드만 접근 가능).
+- 클라우드 클립보드(다른 기기 동기화)를 켜 두었다면, 삭제 전에 이미 다른 기기로 전송됐을 수 있어요. 연결할 때만 잠시 꺼 두면 가장 안전해요 (설정 ▸ 시스템 ▸ 클립보드).
+
 - **같은 사용자 권한으로 실행되는 악성코드는 막을 수 없습니다.** DPAPI도, `~/.claude`·`~/.codex`에 원래 있던 토큰도 같은 계정의 프로그램은 읽을 수 있습니다. 이건 Claude Code / Codex CLI 자체와 같은 수준입니다.
-- **sessionKey는 claude.ai 로그인 그 자체입니다.** 이 프로그램 말고 어디에도 붙여넣지 마세요. "이 쿠키를 붙여넣으세요"라는 요청은 전형적인 계정 탈취 수법입니다. 가능하면 Claude Code CLI 로그인(`claude` → `/login`)을 쓰세요. 연결을 끊으려면 위젯 우클릭 ▸ Claude 연결 끊기를 누르거나 `~/.aiquota_config.json`을 지우면 됩니다. claude.ai에서 로그아웃해도 그 sessionKey는 무효가 됩니다.
+- **sessionKey는 claude.ai 로그인 그 자체입니다.** 이 프로그램 말고 어디에도 붙여넣지 마세요. "이 쿠키를 붙여넣으세요"라는 요청은 전형적인 계정 탈취 수법입니다. 가능하면 Claude Code CLI 로그인(`claude` → `/login`)을 쓰세요. 연결을 끊으려면 위젯 우클릭 ▸ Claude 연결 끊기를 누르세요. claude.ai에서 로그아웃해도 그 sessionKey는 무효가 됩니다.
 - 사용량 조회 주소는 각 앱이 내부적으로 쓰는 **비공식 엔드포인트**입니다. 예고 없이 바뀌거나 막힐 수 있습니다.
 
 ## 취약점 제보

@@ -18,6 +18,7 @@ AI 쿼터 — Claude · Codex 사용량 / 잔여량 / 리셋 시각 + 리셋 추
 """
 import argparse
 import base64
+import hashlib
 import ctypes
 import hmac
 import json
@@ -45,9 +46,52 @@ VERSION = "2.0.0"
 HOME = Path.home()
 CLAUDE_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR") or HOME / ".claude")
 CODEX_DIR = Path(os.environ.get("CODEX_HOME") or HOME / ".codex")
-CACHE_FILE = Path(os.environ.get("AIQUOTA_CACHE") or HOME / ".aiquota_cache.json")
-CONFIG_FILE = Path(os.environ.get("AIQUOTA_CONFIG") or HOME / ".aiquota_config.json")
-HISTORY_FILE = Path(os.environ.get("AIQUOTA_HISTORY") or HOME / ".aiquota_history.jsonl")
+
+
+def _default_data_dir():
+    """[보안] Windows: %LOCALAPPDATA%\\AIQuota — 로밍 프로필·OneDrive 로 동기화되지 않는 위치."""
+    if os.name == "nt" and os.environ.get("LOCALAPPDATA"):
+        return Path(os.environ["LOCALAPPDATA"]) / "AIQuota"
+    return None
+
+
+DATA_DIR = _default_data_dir()
+_FILES = {  # 환경변수, 새 이름, 예전(홈 폴더) 이름
+    "cache": ("AIQUOTA_CACHE", "cache.json", ".aiquota_cache.json"),
+    "config": ("AIQUOTA_CONFIG", "config.json", ".aiquota_config.json"),
+    "history": ("AIQUOTA_HISTORY", "history.jsonl", ".aiquota_history.jsonl"),
+}
+
+
+def _data_path(kind):
+    env, new, old = _FILES[kind]
+    if os.environ.get(env):
+        return Path(os.environ[env])
+    return DATA_DIR / new if DATA_DIR else HOME / old
+
+
+CACHE_FILE = _data_path("cache")
+CONFIG_FILE = _data_path("config")
+HISTORY_FILE = _data_path("history")
+
+
+def migrate_legacy_files():
+    """예전 버전이 홈 폴더에 만든 파일을 새 위치로 옮기고, 남은 옛 파일(암호화된 키 사본 포함)은 지움."""
+    if not DATA_DIR:
+        return
+    for kind, (env, new, old) in _FILES.items():
+        if os.environ.get(env):
+            continue
+        src, dst = HOME / old, DATA_DIR / new
+        if not src.exists():
+            continue
+        try:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            if not dst.exists():
+                shutil.copy2(src, dst)
+            src.unlink()
+        except OSError:
+            pass
 
 CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 CLAUDE_WEB = "https://claude.ai"
@@ -210,6 +254,7 @@ def write_json_atomic(path, data):
     tmp = None
     try:
         path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(prefix=".aiquota-", suffix=".tmp", dir=str(path.parent))
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, allow_nan=False)
@@ -228,6 +273,7 @@ def write_json_atomic(path, data):
 
 def append_private(path, line):
     """[보안] 0600 권한으로 한 줄 추가."""
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(str(path), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
     with os.fdopen(fd, "a", encoding="utf-8") as f:
         f.write(line)
@@ -270,17 +316,29 @@ def update_config(**kv):
         return c
 
 
-def _dpapi(data, protect):
+_ENTROPY = b"AIQuota/claude-session-key/v2"
+
+
+def _use_dpapi():
+    return os.name == "nt"
+
+
+def _dpapi(data, protect, entropy=None):
     from ctypes import wintypes
 
     class BLOB(ctypes.Structure):
         _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
 
-    buf = ctypes.create_string_buffer(data, len(data))
-    blob_in = BLOB(len(data), ctypes.cast(buf, ctypes.POINTER(ctypes.c_char)))
+    def blob(b):
+        buf = ctypes.create_string_buffer(b, len(b))
+        return BLOB(len(b), ctypes.cast(buf, ctypes.POINTER(ctypes.c_char))), buf
+
+    blob_in, _k1 = blob(data)
+    ent, _k2 = blob(entropy) if entropy else (None, None)
     blob_out = BLOB()
     fn = ctypes.windll.crypt32.CryptProtectData if protect else ctypes.windll.crypt32.CryptUnprotectData
-    if not fn(ctypes.byref(blob_in), None, None, None, None, 1, ctypes.byref(blob_out)):
+    # dwFlags=1: CRYPTPROTECT_UI_FORBIDDEN
+    if not fn(ctypes.byref(blob_in), None, ctypes.byref(ent) if ent else None, None, None, 1, ctypes.byref(blob_out)):
         raise OSError("DPAPI 실패")
     try:
         return ctypes.string_at(blob_out.pbData, blob_out.cbData)
@@ -291,6 +349,7 @@ def _dpapi(data, protect):
 SESSIONKEY_RE = re.compile(r"^sk-ant-[A-Za-z0-9_\-]{16,400}$")
 ORG_RE = re.compile(r"^[A-Za-z0-9-]{8,64}$")
 ACCOUNT_RE = re.compile(r"^[A-Za-z0-9_\-]{1,128}$")
+_KEY_IN_TEXT = re.compile(r"sk-ant-[A-Za-z0-9_\-]{16,400}")
 
 
 def normalize_session_key(key):
@@ -302,7 +361,7 @@ def normalize_session_key(key):
 
 
 def secret_storage_label():
-    return "Windows 계정으로 암호화(DPAPI)" if os.name == "nt" else "암호화 없이 소유자 전용(600) 파일"
+    return "Windows 계정으로 암호화(DPAPI)" if _use_dpapi() else "암호화 없이 소유자 전용(600) 파일"
 
 
 def set_secret(name, value):
@@ -310,8 +369,8 @@ def set_secret(name, value):
         update_config(**{name: None})
         return
     raw = value.encode("utf-8")
-    if os.name == "nt":
-        enc = "dpapi:" + base64.b64encode(_dpapi(raw, True)).decode()   # 실패 시 평문 저장하지 않고 오류
+    if _use_dpapi():
+        enc = "dpapi2:" + base64.b64encode(_dpapi(raw, True, _ENTROPY)).decode()  # 실패하면 평문 저장 없이 오류
         update_config(**{name: enc})
         return
     update_config(**{name: "plain:" + base64.b64encode(raw).decode()})
@@ -326,13 +385,151 @@ def get_secret(name):
     try:
         kind, _, data = v.partition(":")
         raw = base64.b64decode(data)
-        if kind == "dpapi":
-            return _dpapi(raw, False).decode("utf-8")
-        if kind == "plain" and os.name != "nt":
+        if kind == "dpapi2" and _use_dpapi():
+            return _dpapi(raw, False, _ENTROPY).decode("utf-8")
+        if kind == "dpapi" and _use_dpapi():          # 예전 형식 → 엔트로피 적용 형식으로 자동 이전
+            val = _dpapi(raw, False).decode("utf-8")
+            try:
+                set_secret(name, val)
+            except Exception:
+                pass
+            return val
+        if kind == "plain" and not _use_dpapi():
             return raw.decode("utf-8")
         return None
     except Exception:
         return None
+
+
+# ─── 클립보드 정리: 붙여넣은 sessionKey 가 클립보드·클립보드 기록(Win+V)에 남지 않게 ───
+_PS_HISTORY = r"""
+$ErrorActionPreference = 'Stop'
+$target = '__TARGET__'
+try {
+  Add-Type -AssemblyName System.Runtime.WindowsRuntime
+  $asTask = [System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' } | Select-Object -First 1
+  function Await($op, [Type]$t) { $task = $asTask.MakeGenericMethod($t).Invoke($null, @($op)); $null = $task.Wait(8000); $task.Result }
+  $null = [Windows.ApplicationModel.DataTransfer.Clipboard, Windows.ApplicationModel.DataTransfer, ContentType = WindowsRuntime]
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  function H([string]$v) { ($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($v)) | ForEach-Object { $_.ToString('x2') }) -join '' }
+  $res = Await ([Windows.ApplicationModel.DataTransfer.Clipboard]::GetHistoryItemsAsync()) ([Windows.ApplicationModel.DataTransfer.ClipboardHistoryItemsResult])
+  if ($res.Status -ne 'Success') { Write-Output ('STATUS ' + $res.Status); exit }
+  $n = 0
+  foreach ($it in @($res.Items)) {
+    try {
+      if (-not $it.Content.Contains('Text')) { continue }
+      $txt = Await ($it.Content.GetTextAsync()) ([string])
+      foreach ($m in [regex]::Matches($txt, 'sk-ant-[A-Za-z0-9_\-]{16,400}')) {
+        if ((H $m.Value) -eq $target) { $null = [Windows.ApplicationModel.DataTransfer.Clipboard]::DeleteItemFromHistory($it); $n++; break }
+      }
+    } catch {}
+  }
+  Write-Output ('OK ' + $n)
+} catch { Write-Output 'FAIL' }
+"""
+
+
+def clipboard_history_script(key):
+    """[보안] 스크립트에는 키가 아니라 SHA-256 해시만 들어감 → PowerShell 로그·프로세스 목록에 키가 안 남음."""
+    return _PS_HISTORY.replace("__TARGET__", hashlib.sha256(key.encode("utf-8")).hexdigest())
+
+
+def key_in_text(key, text):
+    return bool(key and text) and any(m == key for m in _KEY_IN_TEXT.findall(str(text)))
+
+
+def _win_clipboard(clear_if=None):
+    """현재 클립보드 텍스트 읽기. clear_if 키가 들어 있으면 비움 → 비웠으면 True."""
+    from ctypes import wintypes
+    u, k = ctypes.windll.user32, ctypes.windll.kernel32
+    u.OpenClipboard.argtypes = [wintypes.HWND]
+    u.GetClipboardData.restype = ctypes.c_void_p
+    u.GetClipboardData.argtypes = [wintypes.UINT]
+    k.GlobalLock.restype = ctypes.c_void_p
+    k.GlobalLock.argtypes = [ctypes.c_void_p]
+    k.GlobalUnlock.argtypes = [ctypes.c_void_p]
+    for _ in range(10):
+        if u.OpenClipboard(None):
+            break
+        time.sleep(0.05)
+    else:
+        return None
+    try:
+        h = u.GetClipboardData(13)  # CF_UNICODETEXT
+        text = ""
+        if h:
+            p = k.GlobalLock(h)
+            if p:
+                try:
+                    text = ctypes.wstring_at(p)
+                finally:
+                    k.GlobalUnlock(h)
+        if clear_if and key_in_text(clear_if, text):
+            u.EmptyClipboard()
+            return True
+        return False
+    finally:
+        u.CloseClipboard()
+
+
+def scrub_clipboard(key, tk_root=None):
+    """붙여넣은 키를 클립보드와 클립보드 기록에서 지움.
+    반환: {"current": True/False/None, "history": 지운 개수 | "off" | None(못 지움)}"""
+    res = {"current": None, "history": None}
+    try:
+        if os.name == "nt":
+            res["current"] = _win_clipboard(clear_if=key)
+        elif tk_root is not None:
+            try:
+                cur = tk_root.clipboard_get()
+            except Exception:
+                cur = ""
+            if key_in_text(key, cur):
+                tk_root.clipboard_clear()
+                tk_root.clipboard_append(" ")
+                res["current"] = True
+            else:
+                res["current"] = False
+        elif sys.platform == "darwin":
+            cur = subprocess.run(["pbpaste"], capture_output=True, timeout=5).stdout.decode("utf-8", "replace")
+            if key_in_text(key, cur):
+                subprocess.run(["pbcopy"], input=b"", timeout=5)
+                res["current"] = True
+            else:
+                res["current"] = False
+    except Exception:
+        pass
+    if os.name == "nt":
+        try:
+            ps = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+            enc = base64.b64encode(clipboard_history_script(key).encode("utf-16-le")).decode()
+            p = subprocess.run([str(ps), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                                "-EncodedCommand", enc], capture_output=True, timeout=40, creationflags=0x08000000)
+            out = p.stdout.decode("utf-8", "replace")
+            m = re.search(r"OK (\d+)", out)
+            if m:
+                res["history"] = int(m.group(1))
+            elif "ClipboardHistoryDisabled" in out:
+                res["history"] = "off"
+        except Exception:
+            pass
+    return res
+
+
+def scrub_report(res):
+    """사용자에게 보여줄 정리 결과 문구 (키 내용은 절대 포함하지 않음)."""
+    lines = []
+    if res.get("current"):
+        lines.append("✔ 클립보드에서 지웠어요")
+    h = res.get("history")
+    if os.name == "nt":
+        if h == "off":
+            lines.append("✔ 클립보드 기록(Win+V)이 꺼져 있어 남은 게 없어요")
+        elif isinstance(h, int):
+            lines.append(f"✔ 클립보드 기록(Win+V)에서도 지웠어요 ({h}개)" if h else "✔ 클립보드 기록(Win+V)에 남은 게 없어요")
+        else:
+            lines.append("⚠ 클립보드 기록은 자동으로 못 지웠어요 → Win+V 를 눌러 sk-ant- 로 시작하는 항목의 [⋯] ▸ 삭제")
+    return "\n".join(lines)
 
 
 # ─── HTTP ─────────────────────────────────────────────────────
@@ -2654,6 +2851,157 @@ def render_ring(size, bg, rings, dot=None, ss=3):
     return " ".join(rows)
 
 
+class SessionKeyDialog:
+    """[보안] sessionKey 전용 입력창.
+    - 항상 가려서(•) 표시, '보기' 기능 없음
+    - 입력칸에서 복사·잘라내기·우클릭·선택 내보내기 차단 → 한 번 넣은 키를 다시 꺼낼 수 없음
+    - 연결에 성공하면 클립보드와 클립보드 기록(Win+V)에서 자동 삭제
+    - 닫히는 즉시 입력값을 비움"""
+    BG, FG, SUB, INBG, WARN, ERR, OK = "#14161d", "#e9ebf1", "#9aa0ad", "#0d0f14", "#f5953c", "#f05d5d", "#5ad08f"
+
+    def __init__(self, root, on_done=None, colors=None):
+        import tkinter as tk
+        self.tk, self.root, self.on_done = tk, root, on_done
+        if colors:
+            for k, v in colors.items():
+                setattr(self, k, v)
+        self.result = None
+        self._job = None
+        t = self.top = tk.Toplevel(root)
+        t.title("Claude 연결하기")
+        t.configure(bg=self.BG)
+        t.resizable(False, False)
+        try:
+            t.attributes("-topmost", True)
+        except tk.TclError:
+            pass
+        pad = 18
+        f = tk.Frame(t, bg=self.BG)
+        f.pack(padx=pad, pady=pad)
+        font = ("Malgun Gothic", 10) if os.name == "nt" else None
+
+        def label(text, fg=None, bold=False, top=0, wrap=360):
+            fnt = (font[0], font[1] + (1 if bold else 0), "bold" if bold else "normal") if font else None
+            w = tk.Label(f, text=text, bg=self.BG, fg=fg or self.FG, justify="left", anchor="w",
+                         wraplength=wrap, font=fnt)
+            w.pack(fill="x", pady=(top, 0))
+            return w
+        label("claude.ai 로그인으로 Claude 한도 읽기", bold=True)
+        label("1) 크롬/엣지에서 claude.ai 로그인\n"
+              "2) F12 → Application(애플리케이션) → Cookies → https://claude.ai\n"
+              "3) sessionKey 값(sk-ant-sid…)을 복사한 뒤 아래 [붙여넣기]", fg=self.SUB, top=8)
+        label("⚠ 이 값은 로그인 그 자체예요. 이 창 말고 다른 곳·다른 사람에게 절대 주지 마세요.",
+              fg=self.WARN, top=8)
+        self.var = tk.StringVar(master=t)
+        self.ent = tk.Entry(f, textvariable=self.var, show="•", exportselection=False, width=40,
+                            bg=self.INBG, fg=self.FG, insertbackground=self.FG, relief="flat",
+                            highlightthickness=1, highlightbackground="#303544", highlightcolor="#8ab4ff")
+        self.ent.pack(fill="x", pady=(12, 0), ipady=6)
+        for seq in ("<<Copy>>", "<<Cut>>", "<Control-c>", "<Control-C>", "<Control-x>", "<Control-X>",
+                    "<Control-Insert>", "<Shift-Delete>", "<Button-3>", "<Button-2>", "<<PasteSelection>>"):
+            self.ent.bind(seq, lambda e: "break")
+        self.ent.bind("<Return>", lambda e: self.connect())
+        t.bind("<Escape>", lambda e: self.cancel())
+        self.status = label("", fg=self.SUB, top=8)
+        row = tk.Frame(f, bg=self.BG)
+        row.pack(fill="x", pady=(10, 0))
+        mk = dict(relief="flat", padx=12, pady=5, cursor="hand2", bd=0)
+        self.b_cancel = tk.Button(row, text="취소", command=self.cancel, bg="#2a2e39", fg=self.FG,
+                                  activebackground="#343948", activeforeground=self.FG, **mk)
+        self.b_cancel.pack(side="right")
+        self.b_ok = tk.Button(row, text="연결", command=self.connect, bg="#3d6fd6", fg="#ffffff",
+                              activebackground="#4a7be0", activeforeground="#ffffff", **mk)
+        self.b_ok.pack(side="right", padx=(0, 6))
+        self.b_paste = tk.Button(row, text="클립보드에서 붙여넣기", command=self.paste, bg="#2a2e39", fg=self.FG,
+                                 activebackground="#343948", activeforeground=self.FG, **mk)
+        self.b_paste.pack(side="left")
+        t.protocol("WM_DELETE_WINDOW", self.cancel)
+        t.update_idletasks()
+        x = root.winfo_x() - t.winfo_reqwidth() - 12
+        if x < 0:
+            x = root.winfo_x() + root.winfo_width() + 12
+        t.geometry(f"+{max(0, x)}+{max(0, root.winfo_y())}")
+        self.ent.focus_set()
+        try:
+            t.grab_set()
+        except tk.TclError:
+            pass
+
+    def alive(self):
+        try:
+            return bool(self.top.winfo_exists())
+        except Exception:
+            return False
+
+    def say(self, text, color=None):
+        self.status.config(text=text, fg=color or self.SUB)
+
+    def paste(self):
+        try:
+            txt = self.root.clipboard_get()
+        except Exception:
+            txt = ""
+        key = normalize_session_key(txt)
+        txt = None
+        if not key:
+            return self.say("클립보드에 sessionKey 형식(sk-ant-…)의 값이 없어요.", self.ERR)
+        self.var.set(key)
+        self.ent.icursor("end")
+        self.say("붙여넣었어요 (가려져 있어요). [연결]을 눌러 주세요.", self.OK)
+
+    def connect(self):
+        key = normalize_session_key(self.var.get())
+        if not key:
+            return self.say("sessionKey 형식이 아니에요. sk-ant- 로 시작하는 값만 넣어 주세요.", self.ERR)
+        for b in (self.b_ok, self.b_paste):
+            b.config(state="disabled")
+        self.say("확인 중… (claude.ai 에만 보내요)")
+
+        def work():
+            try:
+                d, org_id, plan = claude_web_fetch(key)
+                if not claude_windows_from_payload(d):
+                    raise RuntimeError("사용량 정보가 비어 있어요")
+                set_secret("claude_session_key", key)
+                update_config(claude_org_id=org_id, claude_plan=plan)
+                save_cache_part("claude", None)
+                scrub = scrub_report(scrub_clipboard(key)) if os.name == "nt" or sys.platform == "darwin" else ""
+                self.result = (True, plan, scrub)
+            except Exception as ex:  # noqa
+                self.result = (False, claude_web_error(ex), "")
+        threading.Thread(target=work, daemon=True).start()
+        self._job = self.top.after(200, self._poll)
+
+    def _poll(self):
+        if self.result is None:
+            self._job = self.top.after(200, self._poll)
+            return
+        ok, info, scrub = self.result
+        if not ok:
+            for b in (self.b_ok, self.b_paste):
+                b.config(state="normal")
+            return self.say(f"연결 실패: {info}", self.ERR)
+        if os.name != "nt" and sys.platform != "darwin":
+            r = scrub_clipboard(normalize_session_key(self.var.get()) or "", tk_root=self.root)
+            scrub = scrub_report(r) or ("✔ 클립보드에서 지웠어요" if r.get("current") else "")
+        msg = "연결됐어요" + (f" · {info}" if info else "") + (f"\n\n{scrub}" if scrub else "")
+        self.close(True, msg)
+
+    def cancel(self):
+        self.close(False, None)
+
+    def close(self, ok, msg):
+        self.var.set("")                     # 입력값 즉시 비우기
+        try:
+            self.ent.delete(0, "end")
+            self.top.grab_release()
+            self.top.destroy()
+        except Exception:
+            pass
+        if self.on_done:
+            self.on_done(ok, msg)
+
+
 class QuotaWidget:
     W = 272          # 기본 모드 폭 (논리 px)
     W_MINI = 178     # 미니 모드 폭
@@ -3276,53 +3624,24 @@ class QuotaWidget:
         webbrowser.open(self.srv_url)
 
     def connect_claude(self):
-        from tkinter import simpledialog
         self.hide_tt()
+        if getattr(self, "_dlg", None) and self._dlg.alive():
+            self._dlg.top.lift()
+            return
         self.root.attributes("-topmost", False)
-        try:
-            key = simpledialog.askstring("Claude 연결하기", SESSIONKEY_HELP, parent=self.root, show="*")
-        finally:
-            self.apply_attrs()
-        if not key or not key.strip():
-            return
-        key = normalize_session_key(key)
-        if not key:
-            from tkinter import messagebox
-            messagebox.showerror("Claude 연결하기", "sessionKey 형식이 아니에요.\nsk-ant- 로 시작하는 값만 붙여넣어 주세요.",
-                                 parent=self.root)
-            return
-        self.toast = ("Claude 연결 확인 중…", now_ts() + 30)
-        self._conn = "pending"
 
-        def work():
-            try:
-                d, org_id, plan = claude_web_fetch(key)
-                if not claude_windows_from_payload(d):
-                    raise RuntimeError("사용량 정보가 비어 있어요")
-                set_secret("claude_session_key", key)
-                update_config(claude_org_id=org_id, claude_plan=plan)
-                save_cache_part("claude", None)
-                self._conn = (True, plan)
-            except Exception as ex:  # noqa
-                self._conn = (False, claude_web_error(ex))
-        threading.Thread(target=work, daemon=True).start()
+        def done(ok, msg):
+            self.apply_attrs()
+            self._dlg = None
+            if ok:
+                self.toast = ("Claude 연결됐어요", now_ts() + 5)
+                self.fetch(force=True)
+                from tkinter import messagebox
+                messagebox.showinfo("Claude 연결하기", msg, parent=self.root)
+        self._dlg = SessionKeyDialog(self.root, done)
 
     def finish_connect(self):
-        if self._conn == "pending":
-            return
-        ok, info = self._conn
-        self._conn = None
-        from tkinter import messagebox
-        self.toast = None
-        self.root.attributes("-topmost", False)
-        try:
-            if ok:
-                messagebox.showinfo("Claude 연결하기", f"연결됐어요{(' · ' + info) if info else ''}", parent=self.root)
-                self.fetch(force=True)
-            else:
-                messagebox.showerror("Claude 연결 실패", info, parent=self.root)
-        finally:
-            self.apply_attrs()
+        pass
 
     def disconnect_claude(self):
         set_secret("claude_session_key", None)
@@ -3421,6 +3740,10 @@ def run_setup():
     update_config(claude_org_id=org_id, claude_plan=plan)
     save_cache_part("claude", None)
     print("  " + C.rgb(120, 200, 140, "✔ 연결 완료") + (f" · {plan}" if plan else ""))
+    rep_txt = scrub_report(scrub_clipboard(key))
+    del key, raw
+    for ln in rep_txt.splitlines():
+        print("  " + ln)
     now = now_ts()
     for w in wins:
         if w.get("primary"):
@@ -3487,6 +3810,8 @@ def main():
     ap.add_argument("--version", action="version", version=f"aiquota {VERSION}")
     a = ap.parse_args()
     DEMO = a.demo
+    if not DEMO:
+        migrate_legacy_files()
     if a.no_color or os.environ.get("NO_COLOR") or (not sys.stdout or not sys.stdout.isatty()) and not a.statusline:
         C.on = False
     if a.statusline:
