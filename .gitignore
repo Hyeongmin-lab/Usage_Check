@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+# 개인 데이터 — 절대 커밋하지 않기
+.aiquota_config.json
+.aiquota_cache.json
+.aiquota_history.jsonl
+*.tmp
+.DS_Store
+Thumbs.db
