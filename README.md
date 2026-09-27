@@ -113,3 +113,7 @@ python aiquota.py --demo ...    가짜 데이터로 미리보기
 ```
 
 Claude Code 하단에 두 서비스의 잔여량이 항상 표시되고, Claude 한도가 API 호출 없이 최신으로 유지돼요.
+
+## 라이선스
+
+[MIT](LICENSE) — 자유롭게 쓰고 고치고 공유하세요. 변경 기록은 [CHANGELOG.md](CHANGELOG.md).
