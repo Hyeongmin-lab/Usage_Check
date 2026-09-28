@@ -225,7 +225,8 @@ class TestLocalFilesAndOutput(unittest.TestCase):
         evil = {"model": {"display_name": "Opus\x1b]52;c;ZWNobw==\x07\x1b[2J\u202e"},
                 "rate_limits": {"five_hour": {"used_percentage": 1, "resets_at": 4102444800}}}
         p = subprocess.run([sys.executable, str(ROOT / "aiquota.py"), "--statusline", "--no-color"],
-                           input=json.dumps(evil), capture_output=True, text=True, env=os.environ, timeout=60)
+                           input=json.dumps(evil), capture_output=True, text=True, encoding="utf-8",
+                           env=dict(os.environ, PYTHONIOENCODING="utf-8"), timeout=60)
         self.assertNotIn("\x1b", p.stdout)
         self.assertNotIn("\u202e", p.stdout)
         self.assertIn("Opus", p.stdout)
@@ -337,8 +338,9 @@ class TestSessionKeyNeverExposed(unittest.TestCase):
         ) % (str(ROOT), "lambda url, h, timeout=15: ([{'uuid': 'org-12345678', 'capabilities': ['chat']}] "
              "if url.endswith('/api/organizations') else {'five_hour': {'utilization': 10, 'resets_at': 4102444800}})",
              f"sessionKey={FAKE_KEY}")
-        env = dict(os.environ, AIQUOTA_CONFIG=f"{TMP}/setup_cfg.json")
-        p = subprocess.run([sys.executable, "-c", script], input="\n", capture_output=True, text=True, env=env, timeout=60)
+        env = dict(os.environ, AIQUOTA_CONFIG=f"{TMP}/setup_cfg.json", PYTHONIOENCODING="utf-8")
+        p = subprocess.run([sys.executable, "-c", script], input="\n", capture_output=True, text=True,
+                           encoding="utf-8", env=env, timeout=60)
         out = p.stdout + p.stderr
         self.assertIn("연결 완료", out, out[-500:])
         self.assertNotIn(FAKE_KEY, out)
@@ -350,6 +352,7 @@ class TestSessionKeyNeverExposed(unittest.TestCase):
         home, data = Path(TMP) / "home", Path(TMP) / "localappdata"
         home.mkdir(exist_ok=True)
         (home / ".aiquota_config.json").write_text('{"claude_session_key": "dpapi:xx"}', encoding="utf-8")
+        data.mkdir(exist_ok=True)
         saved = (a.HOME, a.DATA_DIR, dict(os.environ))
         try:
             for env, _, _ in a._FILES.values():
@@ -432,6 +435,28 @@ class TestThemes(unittest.TestCase):
         self.assertIn('data-t="light"', a.HTML)
         self.assertIn(':root[data-theme="light"]', a.HTML)
         self.assertIn(':root[data-theme="light"]', a.WIDGET_HTML)
+
+
+class TestPackaging(unittest.TestCase):
+    def test_frozen_autostart_points_to_exe(self):
+        real_frozen, real_exe, real_sf = a.FROZEN, sys.executable, a.startup_file
+        out = Path(TMP) / "Startup" / "AIQuota_widget.cmd"
+        try:
+            a.FROZEN = True
+            sys.executable = str(Path(TMP) / "앱 100%" / "AIQuota.exe")
+            a.startup_file = lambda: out
+            a.set_autostart(True)
+            body = out.read_text(encoding="utf-8")
+            self.assertIn("AIQuota.exe\" --widget", body)
+            self.assertIn("100%%", body)
+            self.assertNotIn("aiquota.py", body)
+            a.set_autostart(False)
+            self.assertFalse(out.exists())
+        finally:
+            a.FROZEN, sys.executable, a.startup_file = real_frozen, real_exe, real_sf
+
+    def test_icon_bundled(self):
+        self.assertTrue((ROOT / "assets" / "icon.ico").exists())
 
 
 if __name__ == "__main__":
