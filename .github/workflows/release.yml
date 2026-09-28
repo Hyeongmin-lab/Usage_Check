@@ -111,6 +111,8 @@ jobs:
 
       - name: 릴리스 노트 만들기
         if: steps.rel.outputs.release == 'true'
+        env:
+          PYTHONIOENCODING: utf-8
         run: python .github/scripts/release_notes.py "${{ steps.rel.outputs.tag }}" "${{ runner.temp }}\notes.md"
 
       - name: GitHub Release 게시
