@@ -133,6 +133,12 @@ python aiquota.py --demo ...    가짜 데이터로 미리보기
 
 Claude Code 하단에 두 서비스의 잔여량이 항상 표시되고, Claude 한도가 API 호출 없이 최신으로 유지돼요.
 
+## 새 버전 배포 (관리자용)
+
+1. `aiquota.py`의 `VERSION`을 올리고, `CHANGELOG.md`에 `## vX.Y.Z — 제목` 섹션을 추가
+2. 브랜치 → PR → main에 머지
+3. 끝. GitHub Actions가 테스트 → exe 빌드 → 실행 확인 → 출처 증명 → **Release 게시**까지 자동으로 해요.
+
 ## 라이선스
 
 [MIT](LICENSE) — 자유롭게 쓰고 고치고 공유하세요. 변경 기록은 [CHANGELOG.md](CHANGELOG.md).
