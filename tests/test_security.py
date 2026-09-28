@@ -413,5 +413,26 @@ class TestSessionKeyDialog(unittest.TestCase):
         d.cancel()
 
 
+class TestThemes(unittest.TestCase):
+    def test_palettes_complete_and_valid(self):
+        import re as _re
+        d, l = a.THEMES["dark"], a.THEMES["light"]
+        self.assertEqual(set(d), set(l))
+        for pal in (d, l):
+            for v in pal.values():
+                self.assertRegex(v, r"^#[0-9a-f]{6}$")
+        self.assertIn(a.resolve_theme("light"), ("light",))
+        self.assertIn(a.resolve_theme("dark"), ("dark",))
+        self.assertIn(a.resolve_theme("auto"), ("light", "dark"))
+
+    def test_theme_toggle_has_no_inline_handlers(self):
+        # CSP(script nonce)를 지키려면 onclick 같은 인라인 핸들러가 없어야 함
+        for html in (a.HTML, a.WIDGET_HTML):
+            self.assertNotRegex(html, r"\son[a-z]+=")
+        self.assertIn('data-t="light"', a.HTML)
+        self.assertIn(':root[data-theme="light"]', a.HTML)
+        self.assertIn(':root[data-theme="light"]', a.WIDGET_HTML)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -72,7 +72,7 @@ sessionKey는 claude.ai 로그인 그 자체라서, **입력 → 전송 → 저�
 | 7 | 오류 문구에 토큰·프록시 비밀번호가 그대로 표시 | 화면·스크린샷으로 유출 | 비밀값 가리기 |
 
 이 밖에 외부 CDN 폰트 제거, NaN/무한대 값 무력화, 응답 크기 제한, sessionKey 형식 검증, 자동 실행 경로 이스케이프도 추가했습니다.
-각 공격이 계속 막히는지는 `tests/test_security.py`(27개 테스트)로 확인할 수 있습니다.
+각 공격이 계속 막히는지는 `tests/test_security.py`(29개 테스트)로 확인할 수 있습니다.
 
 ```
 python -m unittest discover -s tests -v
