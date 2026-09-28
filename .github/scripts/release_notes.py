@@ -3,6 +3,11 @@ import re
 import sys
 from pathlib import Path
 
+try:  # Windows 러너 기본 인코딩(cp1252)으로는 한글을 출력할 수 없음
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 tag, out = sys.argv[1], Path(sys.argv[2])
 ver = tag.lstrip("v")
 log = Path("CHANGELOG.md").read_text(encoding="utf-8")
