@@ -67,12 +67,14 @@ Python 3.8+ 표준 라이브러리만 사용해요. 설치할 패키지가 없�
 | Codex | Codex 로그인 (`~/.codex/auth.json`) → `chatgpt.com/backend-api/wham/usage` | — | `~/.codex/sessions` 로그 (마지막 사용 시점 기준) |
 
 - 모두 각 앱이 내부적으로 쓰는 **비공식 엔드포인트**라 나중에 바뀔 수 있어요.
-- sessionKey는 `~/.aiquota_config.json`에 **Windows 계정으로 암호화(DPAPI)** 해서 저장돼요. macOS/Linux에서는 소유자 전용(600) 파일로 저장되고, 환경변수 `AIQUOTA_CLAUDE_SESSION_KEY`로도 줄 수 있어요. 해제: 위젯 우클릭 ▸ Claude 연결 끊기.
+- sessionKey는 **Windows 계정으로 암호화(DPAPI)** 해서 `%LOCALAPPDATA%\AIQuota`(동기화 안 되는 위치)에 저장돼요. 연결하면 **클립보드와 클립보드 기록(Win+V)에서도 자동으로 지워요.** macOS/Linux에서는 소유자 전용(600) 파일로 저장되고, 환경변수 `AIQUOTA_CLAUDE_SESSION_KEY`로도 줄 수 있어요. 해제: 위젯 우클릭 ▸ Claude 연결 끊기.
 - claude.ai는 가끔 보안 확인(Cloudflare)으로 자동 요청을 막을 수 있어요. 그럴 땐 Claude Code CLI 로그인(`claude` 실행 → `/login`)이 가장 안정적입니다.
 
-## 생성되는 파일 (모두 사용자 홈 폴더)
+## 생성되는 파일
 
-`.aiquota_config.json`(설정·연결), `.aiquota_cache.json`(최근 값), `.aiquota_history.jsonl`(사용 기록 — 패턴 학습용, 45일 보관)
+Windows는 `%LOCALAPPDATA%\AIQuota\`, macOS/Linux는 홈 폴더(`~/.aiquota_*`)에 만들어져요.
+
+`config.json`(설정·연결, 키는 암호화), `cache.json`(최근 값), `history.jsonl`(사용 기록 — 패턴 학습용, 45일 보관)
 
 ## 큰 화면 대시보드
 
@@ -88,7 +90,8 @@ Python 3.8+ 표준 라이브러리만 사용해요. 설치할 패키지가 없�
 - 텔레메트리, 외부 CDN, 자동 업데이트가 없어요.
 - 로컬 대시보드는 `127.0.0.1` 전용이고, Host 검사와 실행마다 새로 만드는 접근 토큰, CSP를 적용했어요.
 - 설정·기록 파일은 소유자 전용이고, sessionKey는 DPAPI로 암호화해요.
-- 공격 재현 테스트 18개를 `python -m unittest discover -s tests -v`로 돌려볼 수 있어요.
+- 공격 재현 테스트 27개를 `python -m unittest discover -s tests -v`로 돌려볼 수 있어요.
+- **sessionKey 보호**: 입력창은 항상 가려지고 다시 복사할 수 없어요. 연결 후엔 클립보드와 Win+V 기록에서 자동으로 지우고, 동기화되지 않는 위치에 암호화해서 저장해요.
 - ⚠️ **sessionKey는 로그인 그 자체예요.** 이 프로그램 말고 다른 곳이나 다른 사람에게 절대 붙여넣지 마세요.
 
 ## 명령어

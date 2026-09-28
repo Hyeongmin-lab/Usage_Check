@@ -259,5 +259,159 @@ class TestLocalFilesAndOutput(unittest.TestCase):
         self.assertNotIn("sk-ant-", dump)
 
 
+class TestSessionKeyNeverExposed(unittest.TestCase):
+    """sessionKey 가 어디에도 새지 않는지 — 가장 중요한 요구사항."""
+
+    def test_clipboard_history_script_has_no_key(self):
+        import base64
+        import hashlib
+        script = a.clipboard_history_script(FAKE_KEY)
+        self.assertNotIn(FAKE_KEY, script)
+        self.assertNotIn("sk-ant-sid01", script)
+        self.assertIn(hashlib.sha256(FAKE_KEY.encode()).hexdigest(), script)
+        enc = base64.b64encode(script.encode("utf-16-le")).decode()
+        self.assertNotIn(FAKE_KEY, base64.b64decode(enc).decode("utf-16-le"))
+
+    def test_key_detection_in_clipboard_text(self):
+        self.assertTrue(a.key_in_text(FAKE_KEY, FAKE_KEY))
+        self.assertTrue(a.key_in_text(FAKE_KEY, f"sessionKey={FAKE_KEY}; lastActiveOrg=x"))
+        self.assertFalse(a.key_in_text(FAKE_KEY, "sk-ant-sid01-" + "B" * 40))
+        self.assertFalse(a.key_in_text(FAKE_KEY, ""))
+
+    def test_scrub_report_never_contains_key(self):
+        for res in ({"current": True, "history": 2}, {"current": False, "history": None}, {"history": "off"}):
+            self.assertNotIn("sk-ant-sid01", a.scrub_report(res))
+
+    def test_dpapi_path_uses_entropy_and_migrates_legacy(self):
+        calls = []
+
+        def fake_dpapi(data, protect, entropy=None):
+            calls.append((protect, entropy))
+            if protect:
+                return b"ENC[" + (entropy or b"") + b"]" + data[::-1]
+            head, _, body = data.partition(b"]")
+            if head != b"ENC[" + (entropy or b""):
+                raise OSError("wrong entropy")
+            return body[::-1]
+        real_use, real_dp = a._use_dpapi, a._dpapi
+        a._use_dpapi, a._dpapi = (lambda: True), fake_dpapi
+        try:
+            import base64
+            legacy = "dpapi:" + base64.b64encode(fake_dpapi(FAKE_KEY.encode(), True)).decode()
+            a.update_config(claude_session_key=legacy)
+            self.assertEqual(a.get_secret("claude_session_key"), FAKE_KEY)
+            stored = a.load_config()["claude_session_key"]
+            self.assertTrue(stored.startswith("dpapi2:"), "예전 형식이 새 형식으로 이전되지 않음")
+            self.assertEqual(a.get_secret("claude_session_key"), FAKE_KEY)
+            self.assertIn((True, a._ENTROPY), calls)
+            self.assertNotIn(FAKE_KEY, Path(a.CONFIG_FILE).read_text(encoding="utf-8"))
+        finally:
+            a._use_dpapi, a._dpapi = real_use, real_dp
+            a.update_config(claude_session_key=None)
+
+    def test_dpapi_failure_never_falls_back_to_plaintext(self):
+        def boom(*x, **k):
+            raise OSError("no dpapi")
+        real_use, real_dp = a._use_dpapi, a._dpapi
+        a._use_dpapi, a._dpapi = (lambda: True), boom
+        try:
+            with self.assertRaises(OSError):
+                a.set_secret("claude_session_key", FAKE_KEY)
+            self.assertNotIn("claude_session_key", a.load_config())
+        finally:
+            a._use_dpapi, a._dpapi = real_use, real_dp
+
+    def test_setup_output_never_prints_key(self):
+        def fake(url, h, timeout=15):
+            if url.endswith("/api/organizations"):
+                return [{"uuid": "org-12345678", "capabilities": ["chat", "claude_pro"]}]
+            return {"five_hour": {"utilization": 10, "resets_at": 4102444800},
+                    "seven_day": {"utilization": 20, "resets_at": 4102444800}}
+        script = (
+            "import sys, getpass; sys.path.insert(0, %r)\n"
+            "import aiquota as a\n"
+            "a.web_get_json = %s\n"
+            "getpass.getpass = lambda *x, **k: %r\n"
+            "a.scrub_clipboard = lambda *x, **k: {'current': True, 'history': 1}\n"
+            "a.run_setup()\n"
+        ) % (str(ROOT), "lambda url, h, timeout=15: ([{'uuid': 'org-12345678', 'capabilities': ['chat']}] "
+             "if url.endswith('/api/organizations') else {'five_hour': {'utilization': 10, 'resets_at': 4102444800}})",
+             f"sessionKey={FAKE_KEY}")
+        env = dict(os.environ, AIQUOTA_CONFIG=f"{TMP}/setup_cfg.json")
+        p = subprocess.run([sys.executable, "-c", script], input="\n", capture_output=True, text=True, env=env, timeout=60)
+        out = p.stdout + p.stderr
+        self.assertIn("연결 완료", out, out[-500:])
+        self.assertNotIn(FAKE_KEY, out)
+        self.assertNotIn("sk-ant-sid01", out)
+        cfg = Path(f"{TMP}/setup_cfg.json").read_text(encoding="utf-8")
+        self.assertNotIn(FAKE_KEY, cfg)
+
+    def test_legacy_home_files_are_moved_and_removed(self):
+        home, data = Path(TMP) / "home", Path(TMP) / "localappdata"
+        home.mkdir(exist_ok=True)
+        (home / ".aiquota_config.json").write_text('{"claude_session_key": "dpapi:xx"}', encoding="utf-8")
+        saved = (a.HOME, a.DATA_DIR, dict(os.environ))
+        try:
+            for env, _, _ in a._FILES.values():
+                os.environ.pop(env, None)
+            a.HOME, a.DATA_DIR = home, data
+            a.migrate_legacy_files()
+            self.assertFalse((home / ".aiquota_config.json").exists(), "옛 위치에 키 사본이 남음")
+            self.assertTrue((data / "config.json").exists())
+        finally:
+            a.HOME, a.DATA_DIR = saved[0], saved[1]
+            os.environ.clear(); os.environ.update(saved[2])
+
+
+def _tk_root():
+    try:
+        import tkinter as tk
+        r = tk.Tk()
+        r.withdraw()
+        return r
+    except Exception:
+        return None
+
+
+class TestSessionKeyDialog(unittest.TestCase):
+    """입력창: 가려서 표시 · 다시 꺼낼 수 없음 · 닫으면 비워짐 (tkinter + 화면 있을 때만)."""
+
+    def setUp(self):
+        self.root = _tk_root()
+        if not self.root:
+            self.skipTest("tkinter/디스플레이 없음")
+
+    def tearDown(self):
+        if self.root:
+            self.root.destroy()
+
+    def test_masked_and_uncopyable(self):
+        d = a.SessionKeyDialog(self.root)
+        self.assertEqual(d.ent.cget("show"), "•")
+        self.assertIn(str(d.ent.cget("exportselection")), ("0", "False"))
+        d.var.set(FAKE_KEY)
+        self.root.clipboard_clear(); self.root.clipboard_append("SAFE"); self.root.update()
+        d.ent.selection_range(0, "end")
+        for ev in ("<<Copy>>", "<<Cut>>"):
+            d.ent.event_generate(ev)
+            self.root.update()
+            self.assertEqual(self.root.clipboard_get(), "SAFE", ev)
+        self.assertEqual(d.var.get(), FAKE_KEY, "잘라내기로 값이 빠져나감")
+        d.cancel()
+        self.assertEqual(d.var.get(), "")
+
+    def test_paste_button_rejects_garbage_without_echo(self):
+        d = a.SessionKeyDialog(self.root)
+        self.root.clipboard_clear(); self.root.clipboard_append("hello world"); self.root.update()
+        d.paste()
+        self.assertEqual(d.var.get(), "")
+        self.assertNotIn("hello", d.status.cget("text"))
+        self.root.clipboard_clear(); self.root.clipboard_append(f"sessionKey={FAKE_KEY}; x=1"); self.root.update()
+        d.paste()
+        self.assertEqual(d.var.get(), FAKE_KEY)
+        self.assertNotIn("sk-ant", d.status.cget("text"))
+        d.cancel()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
