@@ -4,7 +4,7 @@
 
 ## v2.3.0 — 다운로드해서 바로 쓰기
 - **AIQuota.exe**: Python 없이 더블클릭 한 번으로 위젯 실행 (Windows 10/11)
-- **GitHub가 직접 빌드**: 태그를 올리면 GitHub Actions가 공개 코드로 exe를 만들고, 테스트·실행 확인을 거쳐 Releases에 게시
+- **GitHub가 직접 빌드·배포**: `VERSION`을 올린 PR이 main에 머지되면 GitHub Actions가 공개 코드로 exe를 만들고, 테스트·실행 확인을 거쳐 태그와 Release를 자동으로 게시
 - **믿고 받을 수 있게**: SHA-256 체크섬 + GitHub 빌드 출처 증명(`gh attestation verify`) 제공
 - 위젯 중복 실행 방지 (이미 떠 있으면 알려줌), 앱 아이콘 추가
 - exe로 실행할 때 '컴퓨터 켤 때 자동 실행'이 exe를 바로 띄우도록 수정

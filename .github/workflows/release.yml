@@ -1,7 +1,9 @@
 name: 빌드 · 릴리스
 
-# PR·main: 테스트 + exe 빌드 확인 (아티팩트로만 보관)
-# v* 태그: 위 과정 + 빌드 출처 증명 + GitHub Release 게시
+# PR: 테스트 + exe 빌드 확인 (아티팩트로만 보관)
+# main 에 머지: aiquota.py 의 VERSION 에 해당하는 릴리스(vX.Y.Z)가 아직 없으면
+#               → 태그 생성 + 빌드 출처 증명 + GitHub Release 게시 (자동 배포)
+# v* 태그 직접 푸시: 같은 방식으로 게시
 on:
   push:
     branches: [main]
@@ -40,12 +42,25 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: 태그와 VERSION 일치 확인
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: 릴리스할지 판단
+        id: rel
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $v = (Select-String -Path aiquota.py -Pattern '^VERSION = "(.+)"').Matches[0].Groups[1].Value
-          if ("v$v" -ne "${{ github.ref_name }}") { throw "태그(${{ github.ref_name }})와 aiquota.py VERSION(v$v)이 달라요" }
+          $tag = "v$v"
+          $release = "false"
+          if ("${{ github.ref }}".StartsWith("refs/tags/v")) {
+            if ("${{ github.ref_name }}" -ne $tag) { throw "태그(${{ github.ref_name }})와 aiquota.py VERSION($tag)이 달라요" }
+            $release = "true"
+          } elseif ("${{ github.event_name }}" -eq "push" -and "${{ github.ref }}" -eq "refs/heads/main") {
+            gh release view $tag --repo "${{ github.repository }}" *> $null
+            if ($LASTEXITCODE -ne 0) { $release = "true"; "새 버전 $tag → 이번 빌드를 릴리스해요" } else { "$tag 는 이미 릴리스됨 → 빌드만 확인" }
+            $global:LASTEXITCODE = 0
+          }
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "release=$release" >> $env:GITHUB_OUTPUT
 
       - name: PyInstaller 설치
         run: python -m pip install --upgrade pip "pyinstaller>=6.10,<7"
@@ -87,7 +102,7 @@ jobs:
           retention-days: 14
 
       - name: 빌드 출처 증명 (이 저장소 코드로 GitHub가 빌드했음을 서명)
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: steps.rel.outputs.release == 'true'
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
@@ -95,14 +110,17 @@ jobs:
             out/AIQuota-python.zip
 
       - name: 릴리스 노트 만들기
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: python .github/scripts/release_notes.py "${{ github.ref_name }}" "${{ runner.temp }}\notes.md"
+        if: steps.rel.outputs.release == 'true'
+        run: python .github/scripts/release_notes.py "${{ steps.rel.outputs.tag }}" "${{ runner.temp }}\notes.md"
 
       - name: GitHub Release 게시
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: steps.rel.outputs.release == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          name: AI 쿼터 ${{ github.ref_name }}
+          tag_name: ${{ steps.rel.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          name: AI 쿼터 ${{ steps.rel.outputs.tag }}
           body_path: ${{ runner.temp }}/notes.md
           files: |
             out/AIQuota.exe
