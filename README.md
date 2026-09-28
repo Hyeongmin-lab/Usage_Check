@@ -7,19 +7,30 @@ Python 3.8+ 표준 라이브러리만 사용해요. 설치할 패키지가 없�
 
 > 스크린샷은 모두 **데모 데이터**예요 (`--demo`).
 
-## 설치
+## 다운로드
 
-1. 이 페이지 위쪽 **Code ▸ Download ZIP**으로 받아서 압축 풀기 (또는 `git clone`)
-2. [python.org](https://www.python.org/downloads/)에서 Python 3 설치 (anaconda가 있으면 생략)
+### 👉 [AIQuota.exe 받기](https://github.com/Hyeongmin-lab/Usage_Check/releases/latest/download/AIQuota.exe)
+
+받아서 **더블클릭하면 끝**이에요. Windows 10/11에서 동작하고 Python은 필요 없어요.
+
+- 처음 실행할 때 **"Windows의 PC 보호"** 창이 뜰 수 있어요. 코드 서명 인증서가 없는 개인 프로젝트라서 그래요 → **추가 정보 → 실행**을 누르세요.
+- exe는 개인 PC가 아니라 **GitHub Actions가 이 저장소의 공개 코드로 직접 빌드**해요. 받은 파일이 진짜인지는 [Releases](https://github.com/Hyeongmin-lab/Usage_Check/releases/latest) 페이지의 SHA-256 값이나 `gh attestation verify AIQuota.exe -R Hyeongmin-lab/Usage_Check`로 확인할 수 있어요.
+- 원하는 폴더(예: `문서\AIQuota`)에 넣어두고 쓰세요. 설정은 `%LOCALAPPDATA%\AIQuota`에 따로 저장돼서, exe를 새 버전으로 바꿔도 그대로 유지돼요.
+
+<details>
+<summary>Python으로 직접 실행하고 싶다면</summary>
+
+[Releases](https://github.com/Hyeongmin-lab/Usage_Check/releases/latest)에서 `AIQuota-python.zip`을 받거나 `git clone` 하세요. [python.org](https://www.python.org/downloads/)에서 Python 3.8+ 설치가 필요해요 (anaconda도 자동 인식). 그다음 `위젯_실행.bat`을 실행하면 돼요.
+</details>
 
 ## 처음 한 번
 
-1. **`Claude_연결.bat`** 실행 → claude.ai 로그인 정보(sessionKey) 붙여넣기
-   (이 PC에 Claude Code CLI가 로그인돼 있으면 생략해도 돼요)
-2. **`위젯_실행.bat`** 더블클릭 → 화면 오른쪽 위에 위젯이 떠요 (위젯의 Claude 칸을 눌러 연결해도 돼요)
+1. **AIQuota.exe** 실행 (Python 버전은 `위젯_실행.bat`) → 화면 오른쪽 위에 위젯이 떠요
+2. 위젯의 **Claude 칸을 눌러 연결** → claude.ai 로그인 정보(sessionKey) 붙여넣기
+   (이 PC에 Claude Code CLI가 로그인돼 있으면 생략해도 돼요. Codex는 `codex login`만 돼 있으면 자동)
 3. 위젯 우클릭 ▸ **컴퓨터 켤 때 자동 실행** 체크
 
-문제가 있으면 `진단.bat` 부터 실행해 보세요.
+문제가 있으면 Python 버전의 `진단.bat`을 실행해 보세요.
 
 ## 위젯 보는 법
 
@@ -95,7 +106,7 @@ Windows는 `%LOCALAPPDATA%\AIQuota\`, macOS/Linux는 홈 폴더(`~/.aiquota_*`)�
 - 텔레메트리, 외부 CDN, 자동 업데이트가 없어요.
 - 로컬 대시보드는 `127.0.0.1` 전용이고, Host 검사와 실행마다 새로 만드는 접근 토큰, CSP를 적용했어요.
 - 설정·기록 파일은 소유자 전용이고, sessionKey는 DPAPI로 암호화해요.
-- 공격 재현·기능 테스트 29개를 `python -m unittest discover -s tests -v`로 돌려볼 수 있어요.
+- 공격 재현·기능 테스트 31개를 `python -m unittest discover -s tests -v`로 돌려볼 수 있어요.
 - **sessionKey 보호**: 입력창은 항상 가려지고 다시 복사할 수 없어요. 연결 후엔 클립보드와 Win+V 기록에서 자동으로 지우고, 동기화되지 않는 위치에 암호화해서 저장해요.
 - ⚠️ **sessionKey는 로그인 그 자체예요.** 이 프로그램 말고 다른 곳이나 다른 사람에게 절대 붙여넣지 마세요.
 

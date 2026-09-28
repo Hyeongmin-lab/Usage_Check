@@ -1,0 +1,110 @@
+name: 빌드 · 릴리스
+
+# PR·main: 테스트 + exe 빌드 확인 (아티팩트로만 보관)
+# v* 태그: 위 과정 + 빌드 출처 증명 + GitHub Release 게시
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: 테스트 (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 보안·기능 테스트
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m unittest discover -s tests -v
+
+  build:
+    name: AIQuota.exe 빌드
+    needs: test
+    runs-on: windows-latest
+    permissions:
+      contents: write        # Release 게시
+      id-token: write        # 빌드 출처 증명
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 태그와 VERSION 일치 확인
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path aiquota.py -Pattern '^VERSION = "(.+)"').Matches[0].Groups[1].Value
+          if ("v$v" -ne "${{ github.ref_name }}") { throw "태그(${{ github.ref_name }})와 aiquota.py VERSION(v$v)이 달라요" }
+
+      - name: PyInstaller 설치
+        run: python -m pip install --upgrade pip "pyinstaller>=6.10,<7"
+
+      - name: exe 빌드
+        run: pyinstaller --noconfirm --clean --onefile --windowed --name AIQuota --icon assets/icon.ico --add-data "assets/icon.ico;assets" aiquota.py
+
+      - name: 실행 확인 (위젯이 켜져서 유지되는지)
+        shell: pwsh
+        run: |
+          $env:AIQUOTA_CONFIG  = "$env:RUNNER_TEMP\cfg.json"
+          $env:AIQUOTA_CACHE   = "$env:RUNNER_TEMP\cache.json"
+          $env:AIQUOTA_HISTORY = "$env:RUNNER_TEMP\hist.jsonl"
+          $p = Start-Process -FilePath dist\AIQuota.exe -ArgumentList "--widget","--demo" -PassThru
+          Start-Sleep -Seconds 20
+          if ($p.HasExited) { throw "AIQuota.exe 가 바로 종료됐어요 (exit $($p.ExitCode))" }
+          Stop-Process -Id $p.Id -Force
+          "OK: 위젯이 20초 동안 정상 실행됨"
+
+      - name: 배포 파일 만들기 (+ SHA-256)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory out | Out-Null
+          Copy-Item dist\AIQuota.exe out\
+          $py = "AIQuota-python"
+          New-Item -ItemType Directory "$py\assets" -Force | Out-Null
+          Copy-Item aiquota.py,README.md,LICENSE,SECURITY.md,CHANGELOG.md,_find_python.cmd -Destination $py\
+          Copy-Item *.bat -Destination $py\
+          Copy-Item assets\icon.ico -Destination "$py\assets\"
+          Compress-Archive -Path "$py\*" -DestinationPath out\AIQuota-python.zip
+          $lines = Get-ChildItem out -File | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name }
+          $lines | Set-Content out\SHA256SUMS.txt -Encoding ascii
+          Get-Content out\SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AIQuota-${{ github.sha }}
+          path: out/*
+          retention-days: 14
+
+      - name: 빌드 출처 증명 (이 저장소 코드로 GitHub가 빌드했음을 서명)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            out/AIQuota.exe
+            out/AIQuota-python.zip
+
+      - name: 릴리스 노트 만들기
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: python .github/scripts/release_notes.py "${{ github.ref_name }}" "${{ runner.temp }}\notes.md"
+
+      - name: GitHub Release 게시
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: AI 쿼터 ${{ github.ref_name }}
+          body_path: ${{ runner.temp }}/notes.md
+          files: |
+            out/AIQuota.exe
+            out/AIQuota-python.zip
+            out/SHA256SUMS.txt

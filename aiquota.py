@@ -42,8 +42,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "2.0.0"
+VERSION = "2.3.0"
 HOME = Path.home()
+FROZEN = bool(getattr(sys, "frozen", False))      # PyInstaller 로 만든 AIQuota.exe 로 실행 중인지
+
+
+def resource_path(rel):
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    return base / rel
 CLAUDE_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR") or HOME / ".claude")
 CODEX_DIR = Path(os.environ.get("CODEX_HOME") or HOME / ".codex")
 
@@ -2740,7 +2746,13 @@ def _cmd_quote(p):
 
 def set_autostart(on):
     f = startup_file()
-    if on:
+    if on and FROZEN:
+        exe = _cmd_quote(Path(sys.executable).resolve())
+        body = f'@echo off\r\nchcp 65001 >nul\r\nstart "" "{exe}" --widget\r\n'
+        f.parent.mkdir(parents=True, exist_ok=True)
+        with open(f, "w", encoding="utf-8", newline="") as fh:
+            fh.write(body)
+    elif on:
         d = _cmd_quote(Path(sys.executable).parent)
         script = _cmd_quote(Path(__file__).resolve())
         pyw = _cmd_quote(pythonw_exe())
@@ -3078,6 +3090,12 @@ class QuotaWidget:
         dpi_aware()
         self.root = root = tk.Tk()
         root.title("AI 쿼터")
+        try:
+            ico = resource_path("assets/icon.ico")
+            if os.name == "nt" and ico.exists():
+                root.iconbitmap(default=str(ico))
+        except Exception:
+            pass
         self.s = max(1.0, root.winfo_fpixels("1i") / 96.0)
         wc = load_config().get("widget") or {}
         self.mini = bool(wc.get("compact", False))
@@ -3750,11 +3768,38 @@ class QuotaWidget:
         self.root.mainloop()
 
 
+_MUTEX = None
+
+
+def single_instance():
+    """위젯이 이미 떠 있으면 False (Windows 이름 있는 뮤텍스)."""
+    global _MUTEX
+    if os.name != "nt":
+        return True
+    try:
+        k = ctypes.windll.kernel32
+        _MUTEX = k.CreateMutexW(None, False, "Local\\AIQuotaWidget")
+        return k.GetLastError() != 183  # ERROR_ALREADY_EXISTS
+    except Exception:
+        return True
+
+
 def run_widget():
     try:
         import tkinter  # noqa: F401
     except ImportError:
         return run_web_widget()
+    if not DEMO and not single_instance():
+        try:
+            import tkinter as tk
+            from tkinter import messagebox
+            r = tk.Tk()
+            r.withdraw()
+            messagebox.showinfo("AI 쿼터", "위젯이 이미 실행 중이에요.\n화면 구석을 확인해 주세요.", parent=r)
+            r.destroy()
+        except Exception:
+            pass
+        return
     QuotaWidget().run()
 
 
@@ -3883,6 +3928,12 @@ def run_doctor():
 # ─────────────────────────────────────────────────────────────
 def main():
     global DEMO
+    if sys.stdout is None:          # 창 모드 exe(콘솔 없음)에서 print 가 죽지 않게
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")
+    if FROZEN and len(sys.argv) == 1:   # AIQuota.exe 더블클릭 → 바로 위젯
+        sys.argv.append("--widget")
     ap = argparse.ArgumentParser(description="Claude · Codex 사용량 / 잔여량 / 리셋 시각 + 리셋 추천")
     ap.add_argument("--widget", action="store_true", help="작은 위젯 (항상 위)")
     ap.add_argument("--watch", "-w", action="store_true", help="터미널 라이브 모드")
